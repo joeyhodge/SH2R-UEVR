@@ -1,6 +1,3 @@
-[submodule "dependencies/submodules/glm"]
-	path = dependencies/submodules/glm
+[submodule "dependencies/glm"]
+	path = dependencies/glm
 	url = https://github.com/g-truc/glm
-[submodule "dependencies/submodules/imgui"]
-	path = dependencies/submodules/imgui
-	url = https://github.com/ocornut/imgui
