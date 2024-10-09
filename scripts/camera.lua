@@ -12,17 +12,16 @@ local SHCharacterPlayCameraComponent_c = find_required_object("Class /Script/SHP
 local SHGameplaySaveMenuWidget_c = find_required_object("Class /Script/SHProto.SHGameplaySaveMenuWidget")
 local SHCharAnimationInstance_c = find_required_object("AnimBlueprintGeneratedClass /Game/Game/Characters/Humans/JamesSunderland/Animation/AnimationBlueprints/CH_JamesAnimBP.CH_JamesAnimBP_C")
 
-local AnimNode_Fabrik = find_required_object("ScriptStruct /Script/AnimGraphRuntime.AnimNode_Fabrik")
-
-print(string.format("0x%llx", AnimNode_Fabrik:get_class_default_object():get_address()))
+--local AnimNode_Fabrik = find_required_object("ScriptStruct /Script/AnimGraphRuntime.AnimNode_Fabrik")
+--print(string.format("0x%llx", AnimNode_Fabrik:get_class_default_object():get_address()))
 
 local api = uevr.api
 
-local BlueprintUpdateAnimation = SHCharAnimationInstance_c:find_function("BlueprintUpdateAnimation")
+--[[local BlueprintUpdateAnimation = SHCharAnimationInstance_c:find_function("BlueprintUpdateAnimation")
 
 BlueprintUpdateAnimation:hook_ptr(nil, function(fn, obj, locals, result)
     obj.UseWaponIK = false
-end)
+end)]]
 
 local find_static_class = function(name)
     local c = api:find_uobject(name)
