@@ -33,13 +33,14 @@ public:
     virtual ~SHPlugin();
 
     void on_initialize() override;
+    void on_pre_engine_tick(uevr::API::UGameEngine* engine, float delta) override;
 
 private:
     void hook_get_spread_shoot_vector();
 
-    void* on_get_spread_shoot_vector_internal(uevr::API::UObject* weapon, glm::f64vec2* in_angles, float sangles, glm::f64vec3* out_vec);
-    static void* on_get_spread_shoot_vector(uevr::API::UObject* weapon, glm::f64vec2* in_angles, float sangles, glm::f64vec3* out_vec) {
-        return g_plugin->on_get_spread_shoot_vector_internal(weapon, in_angles, sangles, out_vec);
+    void* on_get_end_trace_loc_internal(uevr::API::UObject* weapon, glm::f64vec2* in_angles, float sangles, glm::f64vec3* out_vec);
+    static void* on_get_end_trace_loc(uevr::API::UObject* weapon, glm::f64vec2* in_angles, float sangles, glm::f64vec3* out_vec) {
+        return g_plugin->on_get_end_trace_loc_internal(weapon, in_angles, sangles, out_vec);
     }
 
     glm::f64vec3* on_get_trace_start_loc_internal(uevr::API::UObject* weapon, glm::f64vec3* out_vec);
@@ -48,6 +49,6 @@ private:
     }
 
     bool m_hooked{false};
-    safetyhook::InlineHook m_spread_shoot_vector_hook;
+    safetyhook::InlineHook m_on_get_end_trace_loc_hook;
     safetyhook::InlineHook m_trace_start_loc_hook;
 };
