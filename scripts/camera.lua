@@ -184,10 +184,12 @@ local color_c = find_required_object("ScriptStruct /Script/CoreUObject.LinearCol
 local zero_color = StructObject.new(color_c)
 
 local temp_actor = nil
+local hmd_actor = nil -- The purpose of the HMD actor is to accurately track the HMD's world transform
 local left_hand_actor = nil
 local right_hand_actor = nil
 local left_hand_component = nil
 local right_hand_component = nil
+local hmd_component = nil
 
 
 local function spawn_actor(world_context, actor_class, location, collision_method, owner)
@@ -332,17 +334,33 @@ local function reset_hand_actors()
         end)
     end
 
+    if hmd_actor ~= nil and UEVR_UObjectHook.exists(hmd_actor) then
+        pcall(function()
+            if hmd_actor.K2_DestroyActor ~= nil then
+                hmd_actor:K2_DestroyActor()
+            end
+        end)
+    end
+
     left_hand_actor = nil
     right_hand_actor = nil
+    hmd_actor = nil
 end
 
 local function reset_hand_actors_if_deleted()
     if left_hand_actor ~= nil and not UEVR_UObjectHook.exists(left_hand_actor) then
         left_hand_actor = nil
+        left_hand_component = nil
     end
 
     if right_hand_actor ~= nil and not UEVR_UObjectHook.exists(right_hand_actor) then
         right_hand_actor = nil
+        right_hand_component = nil
+    end
+
+    if hmd_actor ~= nil and not UEVR_UObjectHook.exists(hmd_actor) then
+        hmd_actor = nil
+        hmd_component = nil
     end
 end
 
@@ -386,11 +404,19 @@ local function spawn_hand_actors()
         return
     end
 
+    hmd_actor = spawn_actor(world, actor_c, pos, 1, nil)
+
+    if hmd_actor == nil then
+        print("Failed to spawn hmd actor")
+        return
+    end
+
     print("Spawned hand actors")
 
     -- Add scene components to the hand actors
     left_hand_component = left_hand_actor:AddComponentByClass(scene_component_c, false, temp_transform, false)
     right_hand_component = right_hand_actor:AddComponentByClass(scene_component_c, false, temp_transform, false)
+    hmd_component = hmd_actor:AddComponentByClass(scene_component_c, false, temp_transform, false)
 
     if left_hand_component == nil then
         print("Failed to add left hand scene component")
@@ -402,10 +428,16 @@ local function spawn_hand_actors()
         return
     end
 
+    if hmd_component == nil then
+        print("Failed to add hmd scene component")
+        return
+    end
+
     print("Added scene components")
 
     left_hand_actor:FinishAddComponent(left_hand_component, false, temp_transform)
     right_hand_actor:FinishAddComponent(right_hand_component, false, temp_transform)
+    hmd_actor:FinishAddComponent(hmd_component, false, temp_transform)
 
     local leftstate = UEVR_UObjectHook.get_or_add_motion_controller_state(left_hand_component)
 
@@ -419,6 +451,13 @@ local function spawn_hand_actors()
     if rightstate then
         rightstate:set_hand(1) -- Right hand
         rightstate:set_permanent(true)
+    end
+
+    local hmdstate = UEVR_UObjectHook.get_or_add_motion_controller_state(hmd_component)
+
+    if hmdstate then
+        hmdstate:set_hand(2) -- HMD
+        hmdstate:set_permanent(true)
     end
 end
 
@@ -735,6 +774,7 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
         end
 
         last_rot = Vector3d.new(rotation.x, rotation.y, rotation.z)
+        --last_rot = hmd_component:K2_GetComponentRotation()
 
         -- This is where we attach the weapons to the motion controllers
         if anim_instance then
@@ -856,8 +896,9 @@ uevr.sdk.callbacks.on_post_calculate_stereo_view_offset(function(device, view_in
     --mesh:K2_SetWorldLocation(Vector3d.new(mesh_pos.X + camera_delta_to_head.x, mesh_pos.Y + camera_delta_to_head.y, mesh_pos.Z), false, empty_hitresult, false)
     --mesh:K2_AddWorldOffset(camera_delta_to_head, false, empty_hitresult, false)
 
-
-    local rotdelta = rotation - last_rot
+    local hmdrot = hmd_component:K2_GetComponentRotation()
+    local rotdelta = hmdrot - last_rot
+    --local rotdelta = rotation - last_rot
 
     -- Fix up the rotation delta
     if rotdelta.x > 180 then
