@@ -11,6 +11,7 @@ end
 local SHCharacterPlayCameraComponent_c = find_required_object("Class /Script/SHProto.SHCharacterPlayCameraComponent")
 local SHGameplaySaveMenuWidget_c = find_required_object("Class /Script/SHProto.SHGameplaySaveMenuWidget")
 local SHMapRenderer_c = find_required_object("Class /Script/SHProto.SHMapRenderer")
+local SHJumpIntoHole_c = find_required_object("Class /Script/SHProto.SHJumpIntoHole")
 --local SHCharAnimationInstance_c = find_required_object("AnimBlueprintGeneratedClass /Game/Game/Characters/Humans/JamesSunderland/Animation/AnimationBlueprints/CH_JamesAnimBP.CH_JamesAnimBP_C")
 
 --local AnimNode_Fabrik = find_required_object("ScriptStruct /Script/AnimGraphRuntime.AnimNode_Fabrik")
@@ -100,6 +101,34 @@ local function is_map_open()
     end
 
     return true
+end
+
+local function find_jump_into_hole(pawn)
+    if pawn == nil then return nil end
+
+    local holes = SHJumpIntoHole_c:get_objects_matching(false)
+
+    if holes == nil or #holes == 0 then
+        return nil
+    end
+
+    for _, hole in ipairs(holes) do
+        local InteractingCharacter = hole.InteractingCharacter
+        if InteractingCharacter == pawn then
+            return hole
+        end
+    end
+
+    return nil
+end
+
+local function is_jumping_into_hole(pawn)
+    local hole = find_jump_into_hole(pawn)
+    if hole == nil then
+        return false
+    end
+
+    return hole:IsInInteraction()
 end
 
 local function get_investigating_item(pawn)
@@ -452,6 +481,10 @@ local function should_vr_mode()
         return false
     end
 
+    if is_jumping_into_hole(my_pawn) then
+        return false
+    end
+
     camera_component = find_camera_component()
     if not camera_component then
         return false
@@ -473,6 +506,10 @@ local function should_vr_mode()
 
     if animation then
         anim_instance = animation.AnimInstance
+
+        --[[if anim_instance and anim_instance:IsAnyMontagePlaying() then
+            return false
+        end]]
     end
 
     if my_pawn.bHidden == true then return false end
@@ -568,6 +605,7 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine_voidptr, delta)
 end)
 
 local last_head_z = nil
+local is_using_two_handed_weapon = false
 
 uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_index, world_to_meters, position, rotation, is_double)
     is_allowing_vr_mode = should_vr_mode()
@@ -774,12 +812,17 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
                         if name:find("Pistol") then
                             state:set_rotation_offset(Vector3f.new(0.149, 0.084, 0.077))
                             state:set_location_offset(Vector3f.new(-2.982, -10.160, 4.038))
+                            is_using_two_handed_weapon = false
                         elseif name:find("Shotgun") then
                             state:set_rotation_offset(Vector3f.new(0.037, 1.556, -0.022)) -- Euler (radians)
                             state:set_location_offset(Vector3f.new(-7.967, -5.752, -0.255))
+                            is_using_two_handed_weapon = true
                         elseif name:find("Rifle") then
                             state:set_rotation_offset(Vector3f.new(0.037, 1.556, -0.022)) -- Euler (radians)
                             state:set_location_offset(Vector3f.new(-30.942, -6.758, 0.017))
+                            is_using_two_handed_weapon = true
+                        else
+                            is_using_two_handed_weapon = false
                         end
                     end
                 end
@@ -850,6 +893,34 @@ uevr.sdk.callbacks.on_post_calculate_stereo_view_offset(function(device, view_in
     end
 
     vr.recenter_view()
+
+    if anim_instance then
+        local equipped_weapon = anim_instance:GetEquippedWeapon()
+
+        if equipped_weapon and is_using_two_handed_weapon and anim_instance:IsAimingWeapon() then
+            local left_hand_pos = left_hand_component:K2_GetComponentLocation()
+            local right_hand_pos = right_hand_component:K2_GetComponentLocation()
+            local dir_to_left_hand = (left_hand_pos - right_hand_pos):normalized()
+            --local average_hand_up = ((left_hand_component:GetUpVector() + right_hand_component:GetUpVector()) * 0.5):normalized()
+            local right_hand_rotation = right_hand_component:K2_GetComponentRotation()
+            --local dir_to_left_hand_rot = kismet_math_library:MakeRotFromXZ(dir_to_left_hand, average_hand_up)
+            --local dir_to_left_hand_q = kismet_math_library:Conv_RotatorToQuaternion(dir_to_left_hand_rot)
+            local dir_to_left_hand_q = kismet_math_library:Conv_VectorToQuaternion(dir_to_left_hand)
+            local right_hand_q = kismet_math_library:Conv_RotatorToQuaternion(right_hand_rotation)
+
+            local delta_q = kismet_math_library:Quat_Inversed(kismet_math_library:Multiply_QuatQuat(right_hand_q, kismet_math_library:Quat_Inversed(dir_to_left_hand_q)))
+            
+            local root = equipped_weapon.RootComponent
+            local current_rotation = root:K2_GetComponentRotation()
+            local current_rot_q = kismet_math_library:Conv_RotatorToQuaternion(current_rotation)
+            local new_rot_q = kismet_math_library:Multiply_QuatQuat(delta_q, current_rot_q)
+
+            current_rotation = kismet_math_library:Quat_Rotator(new_rot_q)
+            root:K2_SetWorldRotation(current_rotation, false, empty_hitresult, false)
+
+
+        end
+    end
 
     -- TODO: make IK better
     --[[local ik = SHAnimIKHandIKSubcomp_c:get_first_object_matching(false)
