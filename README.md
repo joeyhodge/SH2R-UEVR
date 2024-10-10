@@ -19,4 +19,4 @@ Inverse kinematics has been loosely explored, but not working correctly. So body
 
 First, make sure that you are using the very latest **NIGHTLY** version of UEVR, you can get that here: https://github.com/praydog/UEVR-nightly/releases/latest/ or using [Rai Pal](https://github.com/Raicuparta/rai-pal)
 
-Get the latest release zip and click "Import Config" in UEVR, browse to the zip and click it.
+Get the [latest release zip](https://github.com/praydog/SH2R-UEVR/releases/latest) and click "Import Config" in UEVR, browse to the zip and click it.
