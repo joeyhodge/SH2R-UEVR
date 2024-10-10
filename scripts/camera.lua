@@ -10,7 +10,8 @@ end
 
 local SHCharacterPlayCameraComponent_c = find_required_object("Class /Script/SHProto.SHCharacterPlayCameraComponent")
 local SHGameplaySaveMenuWidget_c = find_required_object("Class /Script/SHProto.SHGameplaySaveMenuWidget")
-local SHCharAnimationInstance_c = find_required_object("AnimBlueprintGeneratedClass /Game/Game/Characters/Humans/JamesSunderland/Animation/AnimationBlueprints/CH_JamesAnimBP.CH_JamesAnimBP_C")
+local SHMapRenderer_c = find_required_object("Class /Script/SHProto.SHMapRenderer")
+--local SHCharAnimationInstance_c = find_required_object("AnimBlueprintGeneratedClass /Game/Game/Characters/Humans/JamesSunderland/Animation/AnimationBlueprints/CH_JamesAnimBP.CH_JamesAnimBP_C")
 
 --local AnimNode_Fabrik = find_required_object("ScriptStruct /Script/AnimGraphRuntime.AnimNode_Fabrik")
 --print(string.format("0x%llx", AnimNode_Fabrik:get_class_default_object():get_address()))
@@ -24,27 +25,12 @@ BlueprintUpdateAnimation:hook_ptr(nil, function(fn, obj, locals, result)
 end)]]
 
 local find_static_class = function(name)
-    local c = api:find_uobject(name)
-    if not c then
-        error("Cannot find class " .. name)
-        return nil
-    end
-
+    local c = find_required_object(name)
     return c:get_class_default_object()
 end
 
 local SHCharacterStatics = find_static_class("Class /Script/SHProto.SHCharacterStatics")
 local Statics = find_static_class("Class /Script/Engine.GameplayStatics")
-
-if not SHCharacterStatics then
-    error("Cannot find SHCharacterStatics")
-    return
-end
-
-if not Statics then
-    error("Cannot find Statics")
-    return
-end
 
 local SHCrosshairWidget_c = find_required_object("Class /Script/SHProto.SHCrosshairWidget")
 local hitresult_c = find_required_object("ScriptStruct /Script/Engine.HitResult")
@@ -88,6 +74,47 @@ local function is_save_menu_open()
     end
 
     return widget:IsVisible() and widget:IsRendered()
+end
+
+
+local function find_map_renderer()
+    local renderers = SHMapRenderer_c:get_objects_matching(false)
+
+    if renderers == nil or #renderers == 0 then
+        return nil
+    end
+
+    for _, renderer in ipairs(renderers) do
+        if renderer.Owner ~= nil then
+            return renderer
+        end
+    end
+
+    return nil
+end
+
+local function is_map_open()
+    local renderer = find_map_renderer()
+    if renderer == nil then
+        return false
+    end
+
+    return true
+end
+
+local function get_investigating_item(pawn)
+    if pawn == nil then return nil end
+
+    local items = pawn.Items
+    if items == nil then return nil end
+
+    local item_executive = items.ItemExecutive
+    if item_executive == nil then return nil end
+
+    local item_context = item_executive.ItemContext
+    if item_context == nil then return nil end
+
+    return item_context
 end
 
 local last_rot = nil
@@ -147,13 +174,18 @@ local function spawn_actor(world_context, actor_class, location, collision_metho
     end
 
     Statics:FinishSpawningActor(actor, temp_transform)
+    print("Spawned actor")
 
     return actor
 end
 
 local function reset_temp_actor()
     if temp_actor ~= nil and UEVR_UObjectHook.exists(temp_actor) then
-        temp_actor:K2_DestroyActor()
+        pcall(function() 
+            if temp_actor.K2_DestroyActor ~= nil then
+                temp_actor:K2_DestroyActor()
+            end
+        end)
     end
 
     temp_actor = nil
@@ -253,15 +285,26 @@ local function setup_crosshair_actor(pawn, crosshair_widget)
 end
 
 local function reset_hand_actors()
-    if left_hand_actor ~= nil then
-        left_hand_actor:K2_DestroyActor()
-        left_hand_actor = nil
+    -- We are using pcall on this because for some reason the actors are not always valid
+    -- even if exists returns true
+    if left_hand_actor ~= nil and UEVR_UObjectHook.exists(left_hand_actor) then
+        pcall(function()
+            if left_hand_actor.K2_DestroyActor ~= nil then
+                left_hand_actor:K2_DestroyActor()
+            end
+        end)
     end
 
-    if right_hand_actor ~= nil then
-        right_hand_actor:K2_DestroyActor()
-        right_hand_actor = nil
+    if right_hand_actor ~= nil and UEVR_UObjectHook.exists(right_hand_actor) then
+        pcall(function()
+            if right_hand_actor.K2_DestroyActor ~= nil then
+                right_hand_actor:K2_DestroyActor()
+            end
+        end)
     end
+
+    left_hand_actor = nil
+    right_hand_actor = nil
 end
 
 local function reset_hand_actors_if_deleted()
@@ -294,7 +337,7 @@ local function spawn_hand_actors()
     local pawn = api:get_local_pawn(0)
 
     if pawn == nil then
-        print("Pawn is nil")
+        --print("Pawn is nil")
         return
     end
 
@@ -359,15 +402,40 @@ local my_pawn = nil
 local is_paused = false
 local is_in_cutscene = false
 local mesh = nil
+local movement_component = nil
 local head_pos = nil
 local pawn_pos = nil
 local anim_instance = nil
 local is_in_full_body_anim = false
 local last_crosshair_widget = nil
+local investigating_item = nil
 
 
 local function should_vr_mode()
     anim_instance = nil
+    movement_component = nil
+    my_pawn = api:get_local_pawn(0)
+
+    if not my_pawn then
+        mesh = nil
+        investigating_item = nil
+
+        if last_crosshair_widget then
+            last_crosshair_widget:AddToViewport(0)
+            last_crosshair_widget = nil
+        end
+
+        return false
+    end
+
+    mesh = my_pawn.Mesh
+
+    if not mesh then
+        return false
+    end
+
+    movement_component = my_pawn.Movement
+    investigating_item = get_investigating_item(my_pawn)
 
     if not vr.is_hmd_active() then
         if last_crosshair_widget then
@@ -375,6 +443,12 @@ local function should_vr_mode()
             last_crosshair_widget = nil
         end
 
+        return false
+    end
+
+    -- This means we're pushing something
+    -- if roomscale movement is on during this it will softlock the game
+    if movement_component.PushableComponent then
         return false
     end
 
@@ -389,21 +463,9 @@ local function should_vr_mode()
         return false
     end
 
-    my_pawn = api:get_local_pawn(0)
-
-    if not my_pawn then
-        return false
-    end
-
     is_in_cutscene = SHCharacterStatics:IsCharacterInCutscene(my_pawn)
 
     if is_in_cutscene then
-        return false
-    end
-
-    mesh = my_pawn.Mesh
-
-    if not mesh then
         return false
     end
 
@@ -426,8 +488,41 @@ local is_allowing_vr_mode = false
 local last_roomscale_value = false
 local forward = nil
 local last_delta = 1.0
+local last_level = nil
 
-uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
+local function on_level_changed(new_level)
+    -- All actors can be assumed to be deleted when the level changes
+    print("Level changed")
+    if new_level then
+        print("New level: " .. new_level:get_full_name())
+    end
+    temp_actor = nil
+    left_hand_actor = nil
+    right_hand_actor = nil
+end
+
+uevr.sdk.callbacks.on_pre_engine_tick(function(engine_voidptr, delta)
+    local engine = game_engine_class:get_first_object_matching(false)
+    if not engine then
+        return
+    end
+
+    local viewport = engine.GameViewport
+
+    if viewport then
+        local world = viewport.World
+
+        if world then
+            local level = world.PersistentLevel
+
+            if last_level ~= level then
+                on_level_changed(level)
+            end
+
+            last_level = level
+        end
+    end
+
     last_delta = delta
     reset_temp_actor_if_deleted()
     reset_hand_actors_if_deleted()
@@ -472,6 +567,8 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
     last_crosshair_widget = crosshair_widget
 end)
 
+local last_head_z = nil
+
 uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_index, world_to_meters, position, rotation, is_double)
     is_allowing_vr_mode = should_vr_mode()
 
@@ -480,7 +577,19 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
 
         if last_roomscale_value == true then
             vr.set_mod_value("VR_RoomscaleMovement", "false")
+
+            if is_save_menu_open() then
+                vr.set_mod_value("VR_DecoupledPitch", "false")
+            end
+
             last_roomscale_value = false
+
+            -- Reveal mesh
+            if my_pawn and mesh then
+                mesh:SetRenderInMainPass(true)
+                mesh:SetRenderInDepthPass(true)
+                mesh:SetRenderCustomDepth(true)
+            end
         end
 
         return
@@ -490,12 +599,66 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
         return
     end
 
+    local back_offset = 0.0
+    local using_map = is_map_open()
+
     UEVR_UObjectHook.set_disabled(false)
 
-    if last_roomscale_value == false then
-        vr.set_mod_value("VR_RoomscaleMovement", "true")
-        vr.set_mod_value("VR_DecoupledPitch", "true")
-        last_roomscale_value = true
+    if using_map or investigating_item ~= nil then
+        if investigating_item then
+            mesh:SetRenderInMainPass(false)
+            mesh:SetRenderInDepthPass(false)
+            mesh:SetRenderCustomDepth(false)
+
+            if using_map then
+                -- Realistic two handed map holding
+                local right_hand_pos = right_hand_component:K2_GetComponentLocation()
+                local left_hand_pos = left_hand_component:K2_GetComponentLocation()
+                local dir_to_right_hand = (right_hand_pos - left_hand_pos):normalized()
+                local average_hand_up = ((left_hand_component:GetUpVector() + right_hand_component:GetUpVector()) * 0.5):normalized()
+                local rotation = kismet_math_library:MakeRotFromXZ(dir_to_right_hand, average_hand_up * -1.0)
+                
+                local rotation_q = kismet_math_library:Conv_RotatorToQuaternion(rotation)
+
+                local tilt_angle = 45
+                local tilt_q = kismet_math_library:Quat_MakeFromEuler(Vector3d.new(tilt_angle, 0, 0))
+                rotation_q = kismet_math_library:Multiply_QuatQuat(rotation_q, tilt_q)
+                rotation = kismet_math_library:Quat_Rotator(rotation_q)
+
+                investigating_item:K2_SetActorRotation(rotation, false, empty_hitresult, false)
+                
+                local average_hand_pos = (right_hand_pos + left_hand_pos) * 0.5
+                investigating_item:K2_SetActorLocation(average_hand_pos, false, empty_hitresult, false)
+            else
+                -- Simplistic right handed item holding
+                local right_hand_pos = right_hand_component:K2_GetComponentLocation()
+                local right_hand_rot = right_hand_component:K2_GetComponentRotation()
+                local rotation_q = kismet_math_library:Conv_RotatorToQuaternion(right_hand_rot)
+                local tilt_angle = 90
+                local tilt_q = kismet_math_library:Quat_MakeFromEuler(Vector3d.new(0, 0, tilt_angle))
+                rotation_q = kismet_math_library:Multiply_QuatQuat(rotation_q, tilt_q)
+                right_hand_rot = kismet_math_library:Quat_Rotator(rotation_q)
+                investigating_item:K2_SetActorLocation(right_hand_pos, false, empty_hitresult, false)
+                investigating_item:K2_SetActorRotation(right_hand_rot, false, empty_hitresult, false)
+            end
+        end
+
+        --back_offset = -25.0
+        vr.set_mod_value("VR_RoomscaleMovement", "false")
+        last_roomscale_value = false
+    else
+        if last_roomscale_value == false then
+            vr.set_mod_value("VR_RoomscaleMovement", "true")
+            vr.set_mod_value("VR_DecoupledPitch", "true")
+            last_roomscale_value = true
+    
+            -- Hide mesh
+            if my_pawn and mesh then
+                mesh:SetRenderInMainPass(false)
+                mesh:SetRenderInDepthPass(false)
+                mesh:SetRenderCustomDepth(false)
+            end
+        end
     end
     
     local head_rot = mesh:GetSocketRotation(head_fname)
@@ -504,12 +667,19 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
 
     head_pos = mesh:GetSocketLocation(head_fname)
     pawn_pos = my_pawn:K2_GetActorLocation()
-    position.x = head_pos.X + (forward.X * 10)
+    --[[position.x = head_pos.X + (forward.X * 10)
     position.y = head_pos.Y + (forward.Y * 10)
-    position.z = head_pos.Z + (forward.Z * 10)
-    --[[position.x = pawn_pos.X
-    position.y = pawn_pos.Y
-    position.z = head_pos.Z]]
+    position.z = head_pos.Z + (forward.Z * 10)]]
+    if not last_head_z then
+        last_head_z = head_pos.Z
+    end
+
+    local head_z = last_head_z + ((head_pos.Z - last_head_z) * (last_delta * 2))
+    position.x = pawn_pos.X + (back_offset * forward.X)
+    position.y = pawn_pos.Y + (back_offset * forward.Y)
+    position.z = head_z
+
+    last_head_z = head_z
 
     if view_index == 1 then
         local game_engine = UEVR_UObjectHook.get_first_object_by_class(game_engine_class)
@@ -533,6 +703,11 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
             local equipped_weapon = anim_instance:GetEquippedWeapon()
 
             if equipped_weapon then
+                -- Disables auto aim basically
+                if equipped_weapon.AutoAimMaxRange ~= nil then
+                    equipped_weapon.AutoAimMaxRange = 1.0
+                end
+
                 local weapon_name = equipped_weapon:get_fname():to_string()
 
                 -- Crosshair widget
@@ -676,15 +851,15 @@ uevr.sdk.callbacks.on_post_calculate_stereo_view_offset(function(device, view_in
 
     vr.recenter_view()
 
-    local ik = SHAnimIKHandIKSubcomp_c:get_first_object_matching(false)
+    -- TODO: make IK better
+    --[[local ik = SHAnimIKHandIKSubcomp_c:get_first_object_matching(false)
 
     if ik then
         if anim_instance then
-            --ik:SetRightHandLocation(equipped_weapon.RootComponent:K2_GetComponentLocation(), 1.0, false)
             ik:SetRightHandLocation(right_hand_component:K2_GetComponentLocation(), 1.0, true)
             ik:SetLeftHandLocation(left_hand_component:K2_GetComponentLocation(), 1.0, true)
         end
-    end
+    end]]
 end)
 
 uevr.sdk.callbacks.on_script_reset(function()
