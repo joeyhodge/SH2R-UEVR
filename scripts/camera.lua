@@ -146,6 +146,74 @@ local function get_investigating_item(pawn)
     return item_context
 end
 
+local SHFlashlight_c = find_required_object("Class /Script/SHProto.SHFlashlight")
+
+local function get_flashlight(pawn)
+    if pawn == nil then return nil end
+
+    local items = pawn.Items
+    if items == nil then return nil end
+
+    local equipment_actors = items.EquipmentActors
+    if equipment_actors == nil then return nil end
+    if #equipment_actors == 0 then return nil end
+
+    for _, actor in ipairs(equipment_actors) do
+        if actor:is_a(SHFlashlight_c) then
+            return actor
+        end
+    end
+
+    return nil
+end
+
+local function attach_flashlight(pawn, should_detach)
+    should_detach = should_detach or false
+    local flashlight = get_flashlight(pawn)
+    if flashlight == nil then return end
+
+    local mesh = flashlight.Mesh
+    if mesh == nil then return end
+
+    if should_detach then
+        UEVR_UObjectHook.remove_motion_controller_state(mesh)
+    else
+        local mesh_state = UEVR_UObjectHook.get_or_add_motion_controller_state(mesh)
+        mesh_state:set_hand(0) -- Left hand
+        mesh_state:set_permanent(false)
+        mesh_state:set_rotation_offset(Vector3f.new(0.175, -1.665, -0.007))
+        mesh_state:set_location_offset(Vector3f.new(2.376, 5.972, 0.9))
+    end
+
+    local light = flashlight.LightMain
+    if light == nil then return end
+
+    if should_detach then
+        UEVR_UObjectHook.remove_motion_controller_state(light)
+    else
+        local light_state = UEVR_UObjectHook.get_or_add_motion_controller_state(light)
+        light_state:set_hand(0) -- Left hand
+        light_state:set_permanent(false)
+    end
+
+    local light_shaft = flashlight.Lightshaft
+    if light_shaft == nil then return end
+
+    if should_detach then
+        UEVR_UObjectHook.remove_motion_controller_state(light_shaft)
+    else
+        local light_shaft_state = UEVR_UObjectHook.get_or_add_motion_controller_state(light_shaft)
+        light_shaft_state:set_hand(0) -- Left hand
+        light_shaft_state:set_permanent(false)
+        light_shaft_state:set_rotation_offset(Vector3f.new(1.527, -1.723, -1.647))
+        light_shaft_state:set_location_offset(Vector3f.new(-2.066, -6.140, -5.218))
+    end
+end
+
+local function detach_flashlight(pawn)
+    attach_flashlight(pawn, true)
+end
+
 local last_rot = nil
 
 local kismet_string_library = find_static_class("Class /Script/Engine.KismetStringLibrary")
@@ -645,6 +713,7 @@ end)
 
 local last_head_z = nil
 local is_using_two_handed_weapon = false
+local should_attach_flashlight = true
 
 uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_index, world_to_meters, position, rotation, is_double)
     is_allowing_vr_mode = should_vr_mode()
@@ -653,6 +722,10 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
         UEVR_UObjectHook.set_disabled(true)
 
         if last_roomscale_value == true then
+            if my_pawn ~= nil then
+                detach_flashlight(my_pawn)
+            end
+
             vr.set_mod_value("VR_RoomscaleMovement", "false")
 
             if is_save_menu_open() then
@@ -681,7 +754,12 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
 
     UEVR_UObjectHook.set_disabled(false)
 
-    if using_map or investigating_item ~= nil then
+    should_attach_flashlight = true
+
+    if investigating_item ~= nil then
+        should_attach_flashlight = false
+        detach_flashlight(my_pawn)
+
         if investigating_item then
             mesh:SetRenderInMainPass(false)
             mesh:SetRenderInDepthPass(false)
@@ -959,7 +1037,11 @@ uevr.sdk.callbacks.on_post_calculate_stereo_view_offset(function(device, view_in
             current_rotation = kismet_math_library:Quat_Rotator(new_rot_q)
             root:K2_SetWorldRotation(current_rotation, false, empty_hitresult, false)
 
-
+            detach_flashlight(my_pawn)
+        else
+            if should_attach_flashlight then
+                attach_flashlight(my_pawn)
+            end
         end
     end
 
