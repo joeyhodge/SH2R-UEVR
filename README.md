@@ -5,6 +5,9 @@ UEVR improvements/motion controls for SILENT HILL 2 (2024)
 ## Features
 * First Person
 * Motion controls (no melee swinging yet)
+  * Ranged weapon aiming
+  * Items are attached to right hand when inspecting or receiving them (like ammo)
+  * The map is attached to both hands to simulate holding a map in real life 
 * Two handing of rifle and shotgun
 * Roomscale movement
 * Properly projected crosshair in 3D space
