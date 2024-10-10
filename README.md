@@ -21,6 +21,8 @@ First, make sure that you are using the very latest **NIGHTLY** version of UEVR,
 
 Get the [latest release zip](https://github.com/praydog/SH2R-UEVR/releases/latest) and click "Import Config" in UEVR, browse to the zip and click it.
 
+If you have any previous UEVR profile for this game, you may need to delete it as it may conflict with what this is attempting to do.
+
 ## For curious modders
 
 This uses a hybrid C++ plugin and Lua script, and should serve as a good example of adding VR functionality.
