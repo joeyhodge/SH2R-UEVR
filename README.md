@@ -1,5 +1,7 @@
 # SH2R-UEVR
 
+UEVR improvements/motion controls for SILENT HILL 2 (2024)
+
 ## Features
 * First Person
 * Motion controls (no melee swinging yet)
