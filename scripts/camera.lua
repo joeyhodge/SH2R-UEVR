@@ -12,6 +12,7 @@ local SHCharacterPlayCameraComponent_c = find_required_object("Class /Script/SHP
 local SHGameplaySaveMenuWidget_c = find_required_object("Class /Script/SHProto.SHGameplaySaveMenuWidget")
 local SHMapRenderer_c = find_required_object("Class /Script/SHProto.SHMapRenderer")
 local SHJumpIntoHole_c = find_required_object("Class /Script/SHProto.SHJumpIntoHole")
+local SHItemWeaponMelee_c = find_required_object("Class /Script/SHProto.SHItemWeaponMelee")
 --local SHCharAnimationInstance_c = find_required_object("AnimBlueprintGeneratedClass /Game/Game/Characters/Humans/JamesSunderland/Animation/AnimationBlueprints/CH_JamesAnimBP.CH_JamesAnimBP_C")
 
 --local AnimNode_Fabrik = find_required_object("ScriptStruct /Script/AnimGraphRuntime.AnimNode_Fabrik")
@@ -193,6 +194,7 @@ local function attach_flashlight(pawn, should_detach)
     else
         local light_state = UEVR_UObjectHook.get_or_add_motion_controller_state(light)
         light_state:set_hand(0) -- Left hand
+        light_state:set_rotation_offset(Vector3f.new(0.0, -0.130, 0.0))
         light_state:set_permanent(false)
     end
 
@@ -210,11 +212,15 @@ local function attach_flashlight(pawn, should_detach)
     end
 end
 
+local enqueue_detach_flashlight = false
+
 local function detach_flashlight(pawn)
-    attach_flashlight(pawn, true)
+    --attach_flashlight(pawn, true)
+    enqueue_detach_flashlight = true
 end
 
 local last_rot = nil
+local last_pos = Vector3d.new(0, 0, 0)
 
 local kismet_string_library = find_static_class("Class /Script/Engine.KismetStringLibrary")
 local kismet_math_library = find_static_class("Class /Script/Engine.KismetMathLibrary")
@@ -251,7 +257,7 @@ local temp_transform = StructObject.new(ftransform_c)
 local color_c = find_required_object("ScriptStruct /Script/CoreUObject.LinearColor")
 local zero_color = StructObject.new(color_c)
 
-local temp_actor = nil
+local crosshair_actor = nil
 local hmd_actor = nil -- The purpose of the HMD actor is to accurately track the HMD's world transform
 local left_hand_actor = nil
 local right_hand_actor = nil
@@ -259,6 +265,30 @@ local left_hand_component = nil
 local right_hand_component = nil
 local hmd_component = nil
 
+local LegacyCameraShake_c = find_required_object("Class /Script/GameplayCameras.LegacyCameraShake")
+
+-- Disable camera shake 1
+local BlueprintUpdateCameraShake = LegacyCameraShake_c:find_function("BlueprintUpdateCameraShake")
+
+if BlueprintUpdateCameraShake ~= nil then
+    BlueprintUpdateCameraShake:set_function_flags(BlueprintUpdateCameraShake:get_function_flags() | 0x400) -- Mark as native
+    BlueprintUpdateCameraShake:hook_ptr(function(fn, obj, locals, result)
+        obj.ShakeScale = 0.0
+        
+        return false
+    end)
+end
+
+-- Disable camera shake 2
+local ReceivePlayShake = LegacyCameraShake_c:find_function("ReceivePlayShake")
+
+if ReceivePlayShake ~= nil then
+    ReceivePlayShake:set_function_flags(ReceivePlayShake:get_function_flags() | 0x400) -- Mark as native
+    ReceivePlayShake:hook_ptr(function(fn, obj, locals, result)
+        obj.ShakeScale = 0.0
+        return false
+    end)
+end
 
 local function spawn_actor(world_context, actor_class, location, collision_method, owner)
     temp_transform.Translation = location
@@ -278,21 +308,21 @@ local function spawn_actor(world_context, actor_class, location, collision_metho
     return actor
 end
 
-local function reset_temp_actor()
-    if temp_actor ~= nil and UEVR_UObjectHook.exists(temp_actor) then
+local function reset_crosshair_actor()
+    if crosshair_actor ~= nil and UEVR_UObjectHook.exists(crosshair_actor) then
         pcall(function() 
-            if temp_actor.K2_DestroyActor ~= nil then
-                temp_actor:K2_DestroyActor()
+            if crosshair_actor.K2_DestroyActor ~= nil then
+                crosshair_actor:K2_DestroyActor()
             end
         end)
     end
 
-    temp_actor = nil
+    crosshair_actor = nil
 end
 
-local function reset_temp_actor_if_deleted()
-    if temp_actor ~= nil and not UEVR_UObjectHook.exists(temp_actor) then
-        temp_actor = nil
+local function reset_crosshair_actor_if_deleted()
+    if crosshair_actor ~= nil and not UEVR_UObjectHook.exists(crosshair_actor) then
+        crosshair_actor = nil
     end
 end
 
@@ -311,12 +341,12 @@ local function setup_crosshair_actor(pawn, crosshair_widget)
         return
     end
 
-    reset_temp_actor()
+    reset_crosshair_actor()
 
     local pos = pawn:K2_GetActorLocation()
-    temp_actor = spawn_actor(world, actor_c, pos, 1, nil)
+    crosshair_actor = spawn_actor(world, actor_c, pos, 1, nil)
 
-    if temp_actor == nil then
+    if crosshair_actor == nil then
         print("Failed to spawn actor")
         return
     end
@@ -326,7 +356,7 @@ local function setup_crosshair_actor(pawn, crosshair_widget)
     temp_transform.Translation = pos
     temp_transform.Rotation.W = 1.0
     temp_transform.Scale3D = Vector3d.new(1.0, 1.0, 1.0)
-    local widget_component = temp_actor:AddComponentByClass(widget_component_c, false, temp_transform, false)
+    local widget_component = crosshair_actor:AddComponentByClass(widget_component_c, false, temp_transform, false)
 
     if widget_component == nil then
         print("Failed to add widget component")
@@ -365,7 +395,7 @@ local function setup_crosshair_actor(pawn, crosshair_widget)
     
     widget_component.BlendMode = 2
 
-    temp_actor:FinishAddComponent(widget_component, false, temp_transform)
+    crosshair_actor:FinishAddComponent(widget_component, false, temp_transform)
     widget_component:SetWidget(crosshair_widget)
 
     -- Disable depth testing
@@ -546,6 +576,8 @@ local is_in_full_body_anim = false
 local last_crosshair_widget = nil
 local investigating_item = nil
 
+vr.set_mod_value("VR_RoomscaleMovement", "false")
+vr.set_mod_value("VR_AimMethod", 0)
 
 local function should_vr_mode()
     anim_instance = nil
@@ -625,6 +657,13 @@ local function should_vr_mode()
         return false
     end
 
+    local traversal = my_pawn.Traversal
+
+    -- Like jumping over objects and crawling under stuff
+    if traversal and traversal.CurrentlyPlayingTraversal ~= nil then
+        return false
+    end
+
     return true
 end
 
@@ -640,7 +679,7 @@ local function on_level_changed(new_level)
     if new_level then
         print("New level: " .. new_level:get_full_name())
     end
-    temp_actor = nil
+    crosshair_actor = nil
     left_hand_actor = nil
     right_hand_actor = nil
 end
@@ -668,7 +707,7 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine_voidptr, delta)
     end
 
     last_delta = delta
-    reset_temp_actor_if_deleted()
+    reset_crosshair_actor_if_deleted()
     reset_hand_actors_if_deleted()
 
     if left_hand_actor == nil or right_hand_actor == nil then
@@ -676,7 +715,7 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine_voidptr, delta)
     end
 
     if not vr.is_hmd_active() then
-        reset_temp_actor()
+        reset_crosshair_actor()
         --reset_hand_actors()
         return
     end
@@ -684,8 +723,18 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine_voidptr, delta)
     local pawn = api:get_local_pawn(0)
 
     if not pawn then
-        reset_temp_actor()
+        reset_crosshair_actor()
         return
+    end
+
+    local combat = pawn.Combat
+
+    if combat then
+        local defence_settings = combat.DefenceSettings
+
+        if defence_settings then
+            defence_settings.bDodgeUseViewSnapOnEnemy = false -- Stops dodging from jarringly moving the camera
+        end
     end
 
     local crosshair_widgets = SHCrosshairWidget_c:get_objects_matching(false)
@@ -700,19 +749,23 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine_voidptr, delta)
     end
 
     if crosshair_widget == nil then
-        reset_temp_actor()
+        reset_crosshair_actor()
         return
     end
 
-    if temp_actor == nil or last_crosshair_widget ~= crosshair_widget then
+    if crosshair_actor == nil or last_crosshair_widget ~= crosshair_widget then
         setup_crosshair_actor(pawn, crosshair_widget)
     end
 
     last_crosshair_widget = crosshair_widget
 end)
 
+local last_camera_x = 0.0
+local last_camera_y = 0.0
 local last_head_z = nil
+local last_hmd_pos = Vector3d.new(0, 0, 0)
 local is_using_two_handed_weapon = false
+local is_using_melee_weapon = false
 local should_attach_flashlight = true
 
 uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_index, world_to_meters, position, rotation, is_double)
@@ -720,6 +773,15 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
 
     if not is_allowing_vr_mode then
         UEVR_UObjectHook.set_disabled(true)
+        last_camera_x = position.x
+        last_camera_y = position.y
+        last_head_z = position.z -- So we dont get weird lerping from across the map when we re-enable VR mode
+
+        if hmd_component then
+            pcall(function()
+                last_hmd_pos = hmd_component:K2_GetComponentLocation()
+            end)
+        end
 
         if last_roomscale_value == true then
             if my_pawn ~= nil then
@@ -727,6 +789,7 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
             end
 
             vr.set_mod_value("VR_RoomscaleMovement", "false")
+            vr.set_mod_value("VR_AimMethod", "0")
 
             if is_save_menu_open() then
                 vr.set_mod_value("VR_DecoupledPitch", "false")
@@ -760,42 +823,40 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
         should_attach_flashlight = false
         detach_flashlight(my_pawn)
 
-        if investigating_item then
-            mesh:SetRenderInMainPass(false)
-            mesh:SetRenderInDepthPass(false)
-            mesh:SetRenderCustomDepth(false)
+        mesh:SetRenderInMainPass(false)
+        mesh:SetRenderInDepthPass(false)
+        mesh:SetRenderCustomDepth(false)
 
-            if using_map then
-                -- Realistic two handed map holding
-                local right_hand_pos = right_hand_component:K2_GetComponentLocation()
-                local left_hand_pos = left_hand_component:K2_GetComponentLocation()
-                local dir_to_right_hand = (right_hand_pos - left_hand_pos):normalized()
-                local average_hand_up = ((left_hand_component:GetUpVector() + right_hand_component:GetUpVector()) * 0.5):normalized()
-                local rotation = kismet_math_library:MakeRotFromXZ(dir_to_right_hand, average_hand_up * -1.0)
-                
-                local rotation_q = kismet_math_library:Conv_RotatorToQuaternion(rotation)
+        if using_map then
+            -- Realistic two handed map holding
+            local right_hand_pos = right_hand_component:K2_GetComponentLocation()
+            local left_hand_pos = left_hand_component:K2_GetComponentLocation()
+            local dir_to_right_hand = (right_hand_pos - left_hand_pos):normalized()
+            local average_hand_up = ((left_hand_component:GetUpVector() + right_hand_component:GetUpVector()) * 0.5):normalized()
+            local rotation = kismet_math_library:MakeRotFromXZ(dir_to_right_hand, average_hand_up * -1.0)
+            
+            local rotation_q = kismet_math_library:Conv_RotatorToQuaternion(rotation)
 
-                local tilt_angle = 45
-                local tilt_q = kismet_math_library:Quat_MakeFromEuler(Vector3d.new(tilt_angle, 0, 0))
-                rotation_q = kismet_math_library:Multiply_QuatQuat(rotation_q, tilt_q)
-                rotation = kismet_math_library:Quat_Rotator(rotation_q)
+            local tilt_angle = 45
+            local tilt_q = kismet_math_library:Quat_MakeFromEuler(Vector3d.new(tilt_angle, 0, 0))
+            rotation_q = kismet_math_library:Multiply_QuatQuat(rotation_q, tilt_q)
+            rotation = kismet_math_library:Quat_Rotator(rotation_q)
 
-                investigating_item:K2_SetActorRotation(rotation, false, empty_hitresult, false)
-                
-                local average_hand_pos = (right_hand_pos + left_hand_pos) * 0.5
-                investigating_item:K2_SetActorLocation(average_hand_pos, false, empty_hitresult, false)
-            else
-                -- Simplistic right handed item holding
-                local right_hand_pos = right_hand_component:K2_GetComponentLocation()
-                local right_hand_rot = right_hand_component:K2_GetComponentRotation()
-                local rotation_q = kismet_math_library:Conv_RotatorToQuaternion(right_hand_rot)
-                local tilt_angle = 90
-                local tilt_q = kismet_math_library:Quat_MakeFromEuler(Vector3d.new(0, 0, tilt_angle))
-                rotation_q = kismet_math_library:Multiply_QuatQuat(rotation_q, tilt_q)
-                right_hand_rot = kismet_math_library:Quat_Rotator(rotation_q)
-                investigating_item:K2_SetActorLocation(right_hand_pos, false, empty_hitresult, false)
-                investigating_item:K2_SetActorRotation(right_hand_rot, false, empty_hitresult, false)
-            end
+            investigating_item:K2_SetActorRotation(rotation, false, empty_hitresult, false)
+            
+            local average_hand_pos = (right_hand_pos + left_hand_pos) * 0.5
+            investigating_item:K2_SetActorLocation(average_hand_pos, false, empty_hitresult, false)
+        else
+            -- Simplistic right handed item holding
+            local right_hand_pos = right_hand_component:K2_GetComponentLocation()
+            local right_hand_rot = right_hand_component:K2_GetComponentRotation()
+            local rotation_q = kismet_math_library:Conv_RotatorToQuaternion(right_hand_rot)
+            local tilt_angle = 90
+            local tilt_q = kismet_math_library:Quat_MakeFromEuler(Vector3d.new(0, 0, tilt_angle))
+            rotation_q = kismet_math_library:Multiply_QuatQuat(rotation_q, tilt_q)
+            right_hand_rot = kismet_math_library:Quat_Rotator(rotation_q)
+            investigating_item:K2_SetActorLocation(right_hand_pos, false, empty_hitresult, false)
+            investigating_item:K2_SetActorRotation(right_hand_rot, false, empty_hitresult, false)
         end
 
         --back_offset = -25.0
@@ -805,14 +866,15 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
         if last_roomscale_value == false then
             vr.set_mod_value("VR_RoomscaleMovement", "true")
             vr.set_mod_value("VR_DecoupledPitch", "true")
+            vr.set_mod_value("VR_AimMethod", "0")
             last_roomscale_value = true
-    
-            -- Hide mesh
-            if my_pawn and mesh then
-                mesh:SetRenderInMainPass(false)
-                mesh:SetRenderInDepthPass(false)
-                mesh:SetRenderCustomDepth(false)
-            end
+        end
+
+        -- Hide mesh always
+        if my_pawn and mesh then
+            mesh:SetRenderInMainPass(false)
+            mesh:SetRenderInDepthPass(false)
+            mesh:SetRenderCustomDepth(false)
         end
     end
     
@@ -829,12 +891,31 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
         last_head_z = head_pos.Z
     end
 
-    local head_z = last_head_z + ((head_pos.Z - last_head_z) * (last_delta * 2))
-    position.x = pawn_pos.X + (back_offset * forward.X)
-    position.y = pawn_pos.Y + (back_offset * forward.Y)
+    local wanted_x = pawn_pos.X + (back_offset * forward.X)
+    local wanted_y = pawn_pos.Y + (back_offset * forward.Y)
+    local wanted_z = head_pos.Z
+    local camera_x = last_camera_x + ((wanted_x - last_camera_x) * (last_delta * 4))
+    local camera_y = last_camera_y + ((wanted_y - last_camera_y) * (last_delta * 4))
+    local head_z = last_head_z + ((wanted_z - last_head_z) * (last_delta * 2))
+    position.x = camera_x
+    position.y = camera_y
     position.z = head_z
 
-    last_head_z = head_z
+    if view_index == 1 then
+        if math.abs(wanted_x - camera_x) > 100.0 or math.abs(wanted_y - camera_y) > 100.0 then
+            last_camera_x = wanted_x
+            last_camera_y = wanted_y
+        else
+            last_camera_x = camera_x
+            last_camera_y = camera_y
+        end
+        
+        if math.abs(wanted_z - head_z) > 100.0 then
+            last_head_z = wanted_z
+        else
+            last_head_z = head_z
+        end
+    end
 
     if view_index == 1 then
         local game_engine = UEVR_UObjectHook.get_first_object_by_class(game_engine_class)
@@ -851,14 +932,24 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
             return
         end
 
+        -- This is the real game render rotation before any VR modifications
         last_rot = Vector3d.new(rotation.x, rotation.y, rotation.z)
-        --last_rot = hmd_component:K2_GetComponentRotation()
+        last_pos = Vector3d.new(position.x, position.y, position.z)
 
         -- This is where we attach the weapons to the motion controllers
         if anim_instance then
             local equipped_weapon = anim_instance:GetEquippedWeapon()
 
+            if not equipped_weapon then
+                is_using_melee_weapon = false
+            end
+
             if equipped_weapon then
+                is_using_melee_weapon = equipped_weapon:is_a(SHItemWeaponMelee_c)
+                if is_using_melee_weapon then
+                    is_using_two_handed_weapon = true
+                end
+
                 -- Disables auto aim basically
                 if equipped_weapon.AutoAimMaxRange ~= nil then
                     equipped_weapon.AutoAimMaxRange = 1.0
@@ -867,18 +958,13 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
                 local weapon_name = equipped_weapon:get_fname():to_string()
 
                 -- Crosshair widget
-                if temp_actor then
-                    local ignore_actors = {my_pawn, equipped_weapon, temp_actor}
+                if crosshair_actor then
+                    local ignore_actors = {my_pawn, equipped_weapon, crosshair_actor}
 
                     local root = equipped_weapon.RootComponent
-                    --local mesh = equipped_weapon.Mesh
-                    --local NS_MuzzleSmoke = equipped_weapon.NS_MuzzleSmoke
                     local fire_point = equipped_weapon.FirePoint
                     local weapon_pos = fire_point:K2_GetComponentLocation()
                     local forward_vector = root:GetForwardVector()
-                    --local muzzle_rot = root:GetSocketRotation(muzzle_fx_fname)
-                    --local forward_vector = kismet_math_library:Conv_RotatorToVector(muzzle_rot)
-                    --local forward_vector = NS_MuzzleSmoke:GetForwardVector()
 
                     if weapon_name:find("Shotgun") or weapon_name:find("Rifle") then
                         -- Rotate forward vector by 90 deg on Z axis
@@ -888,30 +974,23 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
                     local end_pos = weapon_pos + (forward_vector * 8192.0)
                     local hit = kismet_system_library:LineTraceSingle(world, weapon_pos, end_pos, 15, true, ignore_actors, 0, reusable_hit_result, true, zero_color, zero_color, 1.0)
                     local hit_location = nil
-                    --temp_actor:K2_SetActorLocation(weapon_pos + (forward_vector * 100.0), false, empty_hitresult, false)
-                    if hit then
-                        --local hit_result_location = reusable_hit_result.Location
-                        --local hit_result_normal = hit_result.ImpactNormal
-                        --hit_location = Vector3d.new(hit_result_location.X, hit_result_location.Y, hit_result_location.Z)
-                        --temp_actor:K2_SetActorLocation(hit_location, false, empty_hitresult, false)
 
+                    if hit then
                         hit_location = weapon_pos + (forward_vector * (reusable_hit_result.Distance * 0.9))
                     else
                         hit_location = weapon_pos + (forward_vector * 8192.0)
-                        --temp_actor:K2_SetActorLocation(hit_location, false, empty_hitresult, false)
                     end
 
                     local delta = weapon_pos - hit_location
                     local len = math.max(0.1, delta:length() * 0.001)
                     
-                    temp_actor:SetActorScale3D(Vector3d.new(len, len, len))
+                    crosshair_actor:SetActorScale3D(Vector3d.new(len, len, len))
 
                     local rot = kismet_math_library:Conv_VectorToRotator(forward_vector)
                     rot.Yaw = rot.Yaw + 180
                     rot.Roll = 0
                     rot.Pitch = -rot.Pitch
-                    --temp_actor:K2_SetActorRotation(rot, false, empty_hitresult, false)
-                    temp_actor:K2_SetActorLocationAndRotation(hit_location, rot, false, empty_hitresult, false)
+                    crosshair_actor:K2_SetActorLocationAndRotation(hit_location, rot, false, empty_hitresult, false)
                 end
 
                 -- Attach the weapon to the right hand
@@ -939,8 +1018,18 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
                             state:set_rotation_offset(Vector3f.new(0.037, 1.556, -0.022)) -- Euler (radians)
                             state:set_location_offset(Vector3f.new(-30.942, -6.758, 0.017))
                             is_using_two_handed_weapon = true
+                        --elseif name:find("IronPipe") then
+                        elseif is_using_melee_weapon then
+                            if name:find("Chainsaw") then
+                                state:set_rotation_offset(Vector3f.new(-0.737, -0.090, 0.096))
+                                state:set_location_offset(Vector3f.new(0.257, 2.007, 31.583))
+                            else
+                                state:set_rotation_offset(Vector3f.new(0.495, 1.928, 0.004)) -- Euler (radians)
+                                state:set_location_offset(Vector3f.new(-1.444, 30.221, -0.914))
+                            end
+                            is_using_two_handed_weapon = true -- It's two handed but it's a melee weapon
                         else
-                            is_using_two_handed_weapon = false
+                            is_using_two_handed_weapon = not is_using_melee_weapon
                         end
                     end
                 end
@@ -963,14 +1052,28 @@ uevr.sdk.callbacks.on_post_calculate_stereo_view_offset(function(device, view_in
         return
     end
 
+    if hmd_component and last_roomscale_value == true then
+        local hmd_pos = hmd_component:K2_GetComponentLocation()
+        local hmd_delta = hmd_pos - last_pos
+
+        -- Reset the delta if it's too large
+        if hmd_delta:length() > 100.0 then
+            hmd_delta = Vector3d.new(0, 0, 0)
+        end
+
+        last_camera_x = last_camera_x + hmd_delta.X
+        last_camera_y = last_camera_y + hmd_delta.Y
+    end
+
+
     -- Using the map and some other things
     if anim_instance and anim_instance.bWholeBodyAnimation then
         return
     end
 
-    local camera_delta_to_head = Vector3d.new(position.x - head_pos.X, position.y - head_pos.Y, position.z - head_pos.Z) - (forward * 10)
-    camera_delta_to_head.z = 0
-    local mesh_pos = mesh:K2_GetComponentLocation()
+    --local camera_delta_to_head = Vector3d.new(position.x - head_pos.X, position.y - head_pos.Y, position.z - head_pos.Z) - (forward * 10)
+    --camera_delta_to_head.z = 0
+    --local mesh_pos = mesh:K2_GetComponentLocation()
     --mesh:K2_SetWorldLocation(Vector3d.new(mesh_pos.X + camera_delta_to_head.x, mesh_pos.Y + camera_delta_to_head.y, mesh_pos.Z), false, empty_hitresult, false)
     --mesh:K2_AddWorldOffset(camera_delta_to_head, false, empty_hitresult, false)
 
@@ -997,6 +1100,8 @@ uevr.sdk.callbacks.on_post_calculate_stereo_view_offset(function(device, view_in
         rotdelta.z = rotdelta.z + 360
     end
 
+    local has_look_operation = false
+
     local attach_parent = camera_component.AttachParent -- Spring arm
     if attach_parent then
         attach_parent.bEnableCameraRotationLag = false
@@ -1005,31 +1110,45 @@ uevr.sdk.callbacks.on_post_calculate_stereo_view_offset(function(device, view_in
         -- View component
         local attach_parent_parent = attach_parent.AttachParent
 
-        if attach_parent_parent then -- bHidden gets set when looking at some stuff
-            -- this is how we make the internal camera aim towards the HMD rotation
-            attach_parent_parent:AddToControlRotation(rotdelta, nil)
+        if attach_parent_parent then
+            attach_parent_parent:SetRotationScale(1.0, nil)
+
+            local operation_events = attach_parent_parent.LookOperation.OperationEvents
+            if operation_events ~= nil then
+                operation_events.CurrentSettings.bIsSecuredOperation = false -- Dont want this forcing camera control
+                has_look_operation = true
+            else
+                -- this is how we make the internal camera aim towards the HMD rotation
+                attach_parent_parent:AddToControlRotation(rotdelta, nil)
+                vr.recenter_view()
+                --attach_parent_parent:OverrideControlRotation(hmdrot, nil)
+            end
         end
     end
-
-    vr.recenter_view()
 
     if anim_instance then
         local equipped_weapon = anim_instance:GetEquippedWeapon()
 
+        -- Two handed weapon aiming (like rifles and shotguns)
         if equipped_weapon and is_using_two_handed_weapon and anim_instance:IsAimingWeapon() then
             local left_hand_pos = left_hand_component:K2_GetComponentLocation()
             local right_hand_pos = right_hand_component:K2_GetComponentLocation()
             local dir_to_left_hand = (left_hand_pos - right_hand_pos):normalized()
-            --local average_hand_up = ((left_hand_component:GetUpVector() + right_hand_component:GetUpVector()) * 0.5):normalized()
             local right_hand_rotation = right_hand_component:K2_GetComponentRotation()
-            --local dir_to_left_hand_rot = kismet_math_library:MakeRotFromXZ(dir_to_left_hand, average_hand_up)
-            --local dir_to_left_hand_q = kismet_math_library:Conv_RotatorToQuaternion(dir_to_left_hand_rot)
-            local dir_to_left_hand_q = kismet_math_library:Conv_VectorToQuaternion(dir_to_left_hand)
+
+            local root = equipped_weapon.RootComponent
+            local weapon_up_vector = root:GetUpVector()
+            local new_direction_rot = kismet_math_library:MakeRotFromXZ(dir_to_left_hand, weapon_up_vector)
+
+            local dir_to_left_hand_q = kismet_math_library:Conv_RotatorToQuaternion(new_direction_rot)
             local right_hand_q = kismet_math_library:Conv_RotatorToQuaternion(right_hand_rotation)
 
             local delta_q = kismet_math_library:Quat_Inversed(kismet_math_library:Multiply_QuatQuat(right_hand_q, kismet_math_library:Quat_Inversed(dir_to_left_hand_q)))
             
-            local root = equipped_weapon.RootComponent
+            local original_grip_position = right_hand_pos
+            local delta_to_grip = original_grip_position - root:K2_GetComponentLocation()
+            local delta_rotated_q = kismet_math_library:Quat_RotateVector(delta_q, delta_to_grip)
+
             local current_rotation = root:K2_GetComponentRotation()
             local current_rot_q = kismet_math_library:Conv_RotatorToQuaternion(current_rotation)
             local new_rot_q = kismet_math_library:Multiply_QuatQuat(delta_q, current_rot_q)
@@ -1037,9 +1156,12 @@ uevr.sdk.callbacks.on_post_calculate_stereo_view_offset(function(device, view_in
             current_rotation = kismet_math_library:Quat_Rotator(new_rot_q)
             root:K2_SetWorldRotation(current_rotation, false, empty_hitresult, false)
 
-            detach_flashlight(my_pawn)
+            local new_weapon_position = original_grip_position - delta_rotated_q
+            root:K2_SetWorldLocation(new_weapon_position, false, empty_hitresult, false)
+
+            --detach_flashlight(my_pawn) -- Not gonna detach... for now
         else
-            if should_attach_flashlight then
+            if should_attach_flashlight and not enqueue_detach_flashlight then
                 attach_flashlight(my_pawn)
             end
         end
@@ -1056,9 +1178,40 @@ uevr.sdk.callbacks.on_post_calculate_stereo_view_offset(function(device, view_in
     end]]
 end)
 
+uevr.sdk.callbacks.on_post_engine_tick(function()
+    -- We do this here so UObjectHook can reset the position back correctly
+    if enqueue_detach_flashlight then
+        local pawn = api:get_local_pawn(0)
+
+        if pawn then
+            attach_flashlight(pawn, true) -- the true means detach
+        end
+
+        enqueue_detach_flashlight = false
+    end
+end)
+
+uevr.sdk.callbacks.on_xinput_get_state(function(retval, user_index, state)
+    if not is_allowing_vr_mode then return end
+
+    -- If right stick Y is down, press the B button
+    local max_int16 = 0x7FFF
+    if state.Gamepad.sThumbRY <= -max_int16 * 0.75 and investigating_item == nil then
+        state.Gamepad.wButtons = state.Gamepad.wButtons | XINPUT_GAMEPAD_B
+    end
+end)
+
 uevr.sdk.callbacks.on_script_reset(function()
     print("Resetting")
 
-    reset_temp_actor()
+    reset_crosshair_actor()
     reset_hand_actors()
+
+    if BlueprintUpdateCameraShake ~= nil then
+        BlueprintUpdateCameraShake:set_function_flags(BlueprintUpdateCameraShake:get_function_flags() & ~0x400) -- Unmark as native
+    end
+
+    if ReceivePlayShake ~= nil then
+        ReceivePlayShake:set_function_flags(ReceivePlayShake:get_function_flags() & ~0x400) -- Unmark as native
+    end
 end)
