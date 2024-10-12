@@ -105,6 +105,11 @@ public:
         return result;
     }
 
+    void dispatch_lua_event(std::string_view event_name, std::string_view event_data) {
+        static const auto fn = param()->functions->dispatch_lua_event;
+        fn(event_name.data(), event_data.data());
+    }
+
     template <typename... Args> void log_error(const char* format, Args... args) { m_param->functions->log_error(format, args...); }
     template <typename... Args> void log_warn(const char* format, Args... args) { m_param->functions->log_warn(format, args...); }
     template <typename... Args> void log_info(const char* format, Args... args) { m_param->functions->log_info(format, args...); }
@@ -546,6 +551,16 @@ public:
         void* get_native_function() const {
             static const auto fn = initialize()->get_native_function;
             return fn(to_handle());
+        }
+
+        uint32_t get_function_flags() const {
+            static const auto fn = initialize()->get_function_flags;
+            return fn(to_handle());
+        }
+
+        void set_function_flags(uint32_t flags) {
+            static const auto fn = initialize()->set_function_flags;
+            fn(to_handle(), flags);
         }
 
         using UEVR_UFunction_CPPPreNative = bool(*)(API::UFunction*, API::UObject*, void*, void*);
@@ -1508,6 +1523,11 @@ public:
         static MotionControllerState* get_motion_controller_state(UObject* obj) {
             static const auto fn = initialize()->get_motion_controller_state;
             return (MotionControllerState*)fn(obj->to_handle());
+        }
+        
+        static void remove_motion_controller_state(UObject* obj) {
+            static const auto fn = initialize()->remove_motion_controller_state;
+            fn(obj->to_handle());
         }
 
         struct MotionControllerState {

@@ -6,7 +6,6 @@
 #include "uevr/API.hpp"
 #include "uevr/Plugin.hpp"
 #include <glm/glm.hpp>
-#include <safetyhook.hpp>
 #include <utility/PointerHook.hpp>
 
 #define PLUGIN_LOG_ONCE(...) { \
@@ -49,6 +48,12 @@ private:
     }
 
     bool m_hooked{false};
-    safetyhook::InlineHook m_on_get_end_trace_loc_hook;
-    safetyhook::InlineHook m_trace_start_loc_hook;
+    //safetyhook::InlineHook m_on_get_end_trace_loc_hook;
+    //safetyhook::InlineHook m_trace_start_loc_hook;
+    int32_t m_on_get_end_trace_loc_hook_id{};
+    int32_t m_trace_start_loc_hook_id{};
+    using GetEndTraceLocFn = void*(*)(uevr::API::UObject*, glm::f64vec2*, float, glm::f64vec3*);
+    GetEndTraceLocFn m_on_get_end_trace_loc_hook_fn{};
+    using GetStartTraceLocFn = glm::f64vec3*(*)(uevr::API::UObject*, glm::f64vec3*);
+    GetStartTraceLocFn m_trace_start_loc_hook_fn{};
 };

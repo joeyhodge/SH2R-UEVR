@@ -20,26 +20,26 @@ void SHPlugin::on_pre_engine_tick(uevr::API::UGameEngine* engine, float delta) {
 
 }
 
-safetyhook::InlineHook hook_vtable_fn(std::wstring_view class_name, std::wstring_view fn_name, uintptr_t destination) {
+int32_t hook_vtable_fn(std::wstring_view class_name, std::wstring_view fn_name, void* destination, void** original) {
     auto obj = (API::UClass*)API::get()->find_uobject(class_name);
 
     if (obj == nullptr) {
         //PLUGIN_LOG_ONCE_ERROR("Failed to find %ls", class_name.data());
-        return safetyhook::InlineHook();
+        return -1;
     }
 
     auto fn = obj->find_function(fn_name);
 
     if (fn == nullptr) {
         //PLUGIN_LOG_ONCE_ERROR("Failed to find %ls", fn_name.data());
-        return safetyhook::InlineHook();
+        return -1;
     }
 
     auto native = fn->get_native_function();
 
     if (native == nullptr) {
         //PLUGIN_LOG_ONCE_ERROR("Failed to get native function");
-        return safetyhook::InlineHook();
+        return -1;
     }
 
     //PLUGIN_LOG_ONCE("%ls native: 0x%p", fn_name.data(), native);
@@ -48,14 +48,14 @@ safetyhook::InlineHook hook_vtable_fn(std::wstring_view class_name, std::wstring
 
     if (default_object == nullptr) {
         //PLUGIN_LOG_ONCE_ERROR("Failed to get default object");
-        return safetyhook::InlineHook();
+        return -1;
     }
 
     auto insn = utility::scan_disasm((uintptr_t)native, 0x1000, "FF 90 ? ? ? ?");
 
     if (!insn) {
         //PLUGIN_LOG_ONCE_ERROR("Failed to find the instruction");
-        return safetyhook::InlineHook();
+        return -1;
     }
 
     auto offset = *(int32_t*)(*insn + 2);
@@ -65,23 +65,25 @@ safetyhook::InlineHook hook_vtable_fn(std::wstring_view class_name, std::wstring
 
     //PLUGIN_LOG_ONCE("Real %ls: 0x%p (index: %d, offset 0x%X)", fn_name.data(), real_fn, offset / sizeof(void*), offset);
 
-    auto result = safetyhook::create_inline(real_fn, destination);
+    //auto result = safetyhook::create_inline(real_fn, destination);
 
     //PLUGIN_LOG_ONCE("Hooked %ls", fn_name.data());
 
-    return std::move(result);
+    //return std::move(result);
+
+    return API::get()->param()->functions->register_inline_hook((void*)real_fn, (void*)destination, original);
 }
 
 // This is one thing we can't do from Lua,
 // because well... it's not called from BP.
 // It also calls a virtual function internally which we need to find the index of.
 void SHPlugin::hook_get_spread_shoot_vector() {
-    m_on_get_end_trace_loc_hook = hook_vtable_fn(L"Class /Script/SHProto.SHItemWeaponRanged", L"GetEndTraceLoc", (uintptr_t)on_get_end_trace_loc);
-    m_trace_start_loc_hook = hook_vtable_fn(L"Class /Script/SHProto.SHItemWeaponRanged", L"GetStartTraceLoc", (uintptr_t)on_get_trace_start_loc);
+    m_on_get_end_trace_loc_hook_id = hook_vtable_fn(L"Class /Script/SHProto.SHItemWeaponRanged", L"GetEndTraceLoc", on_get_end_trace_loc, (void**)&m_on_get_end_trace_loc_hook_fn);
+    m_trace_start_loc_hook_id = hook_vtable_fn(L"Class /Script/SHProto.SHItemWeaponRanged", L"GetStartTraceLoc", on_get_trace_start_loc, (void**)&m_trace_start_loc_hook_fn);
 }
 
 glm::f64vec3* SHPlugin::on_get_trace_start_loc_internal(uevr::API::UObject* weapon, glm::f64vec3* out_vec) {
-    auto result = m_trace_start_loc_hook.unsafe_call<glm::f64vec3*>(weapon, out_vec);
+    auto result = m_trace_start_loc_hook_fn(weapon, out_vec);
 
     if (result != nullptr) {
         //API::get()->log_info("Start Trace Current result: %f, %f, %f", result->x, result->y, result->z);
@@ -97,6 +99,8 @@ glm::f64vec3* SHPlugin::on_get_trace_start_loc_internal(uevr::API::UObject* weap
             result->x = location_params.location.x;
             result->y = location_params.location.y;
             result->z = location_params.location.z;
+
+            //API::get()->dispatch_lua_event("GetStartTraceLoc", "Test");
         }
     }
 
@@ -107,7 +111,7 @@ void* SHPlugin::on_get_end_trace_loc_internal(uevr::API::UObject* weapon, glm::f
     //API::get()->log_info("SHPlugin::on_get_spread_shoot_vector_internal(0x%p, %f, %f, %f, 0x%p)", weapon, in_angles->x, in_angles->y, out_vec);
 
     // Call the original function
-    void* result = m_on_get_end_trace_loc_hook.unsafe_call<void*>(weapon, in_angles, shootangles, out_vec);
+    void* result = m_on_get_end_trace_loc_hook_fn(weapon, in_angles, shootangles, out_vec);
 
     // Modify the output vector
     /*if (out_vec != nullptr) {
@@ -168,6 +172,8 @@ void* SHPlugin::on_get_end_trace_loc_internal(uevr::API::UObject* weapon, glm::f
             result_f64vec3->x = new_vec.x;
             result_f64vec3->y = new_vec.y;
             result_f64vec3->z = new_vec.z;
+
+            //API::get()->dispatch_lua_event("GetEndTraceLoc", "Test");
         }
     } 
 

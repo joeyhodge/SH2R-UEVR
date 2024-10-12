@@ -36,7 +36,6 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /MP")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP")
 
 set(ASMJIT_STATIC ON CACHE BOOL "" FORCE)
-set(SAFETYHOOK_FETCH_ZYDIS ON)
 
 if ("${CMAKE_BUILD_TYPE}" MATCHES "Release")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /MT")
@@ -62,15 +61,6 @@ FetchContent_Declare(bddisasm
 		v1.34.10
 )
 FetchContent_MakeAvailable(bddisasm)
-
-message(STATUS "Fetching safetyhook (b046e123dc69821f2c375161e0adef3c6d9c9db4)...")
-FetchContent_Declare(safetyhook
-	GIT_REPOSITORY
-		"https://github.com/cursey/safetyhook"
-	GIT_TAG
-		b046e123dc69821f2c375161e0adef3c6d9c9db4
-)
-FetchContent_MakeAvailable(safetyhook)
 
 message(STATUS "Fetching spdlog (76fb40d95455f249bd70824ecfcae7a8f0930fa3)...")
 FetchContent_Declare(spdlog
@@ -164,7 +154,6 @@ target_include_directories(sh2r PUBLIC
 target_link_libraries(sh2r PUBLIC
 	kananlib
 	glm_static
-	safetyhook
 )
 
 target_compile_definitions(sh2r PUBLIC 

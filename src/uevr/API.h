@@ -36,7 +36,7 @@ SOFTWARE.
 #define UEVR_OUT
 
 #define UEVR_PLUGIN_VERSION_MAJOR 2
-#define UEVR_PLUGIN_VERSION_MINOR 30
+#define UEVR_PLUGIN_VERSION_MINOR 33
 #define UEVR_PLUGIN_VERSION_PATCH 0
 
 #define UEVR_RENDERER_D3D11 0
@@ -217,6 +217,7 @@ typedef struct {
     unsigned int (*get_persistent_dir)(wchar_t* buffer, unsigned int buffer_size);
     int (*register_inline_hook)(void* target, void* dst, void** original);
     void (*unregister_inline_hook)(int hook_id);
+    void (*dispatch_lua_event)(const char* event_name, const char* event_data);
 } UEVR_PluginFunctions;
 
 typedef struct {
@@ -325,6 +326,8 @@ typedef struct {
 typedef struct {
     void* (*get_native_function)(UEVR_UFunctionHandle function);
     bool (*hook_ptr)(UEVR_UFunctionHandle function, UEVR_UFunction_NativePreFn pre_hook, UEVR_UFunction_NativePostFn post_hook);
+    unsigned int (*get_function_flags)(UEVR_UFunctionHandle function);
+    void (*set_function_flags)(UEVR_UFunctionHandle function, unsigned int flags);
 } UEVR_UFunctionFunctions;
 
 typedef struct {
@@ -372,6 +375,8 @@ typedef struct {
 
     bool (*is_disabled)();
     void (*set_disabled)(bool disabled);
+
+    void (*remove_motion_controller_state)(UEVR_UObjectHandle object);
 } UEVR_UObjectHookFunctions;
 
 typedef struct {
