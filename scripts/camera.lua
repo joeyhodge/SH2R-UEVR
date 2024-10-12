@@ -13,6 +13,8 @@ local SHGameplaySaveMenuWidget_c = find_required_object("Class /Script/SHProto.S
 local SHMapRenderer_c = find_required_object("Class /Script/SHProto.SHMapRenderer")
 local SHJumpIntoHole_c = find_required_object("Class /Script/SHProto.SHJumpIntoHole")
 local SHItemWeaponMelee_c = find_required_object("Class /Script/SHProto.SHItemWeaponMelee")
+local SHItemExecutiveBase_c = find_required_object("Class /Script/SHProto.SHItemExecutiveBase")
+local SHCameraAnimationExecutive_c = find_required_object("Class /Script/SHProto.SHCameraAnimationExecutive")
 --local SHCharAnimationInstance_c = find_required_object("AnimBlueprintGeneratedClass /Game/Game/Characters/Humans/JamesSunderland/Animation/AnimationBlueprints/CH_JamesAnimBP.CH_JamesAnimBP_C")
 
 --local AnimNode_Fabrik = find_required_object("ScriptStruct /Script/AnimGraphRuntime.AnimNode_Fabrik")
@@ -664,6 +666,39 @@ local function should_vr_mode()
         return false
     end
 
+    local controller = my_pawn:GetController()
+
+    if controller ~= nil then
+        local camera_manager = controller.PlayerCameraManager
+
+        if camera_manager ~= nil then
+            local view_target_struct = camera_manager.ViewTarget
+
+            if view_target_struct ~= nil then
+                local target = view_target_struct.Target
+
+                if target ~= nil and target ~= my_pawn then
+                    local allowed = {
+                        SHItemExecutiveBase_c -- Looking at map, items, etc
+                    }
+
+                    local any = false
+
+                    for _, klass in ipairs(allowed) do
+                        if target:is_a(klass) then
+                            any = true
+                            break
+                        end
+                    end
+
+                    if not any then
+                        return false
+                    end
+                end
+            end
+        end
+    end
+
     return true
 end
 
@@ -760,13 +795,47 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine_voidptr, delta)
     last_crosshair_widget = crosshair_widget
 end)
 
+-- Might not be needed?
+local function should_display_mesh()
+    if not my_pawn or not mesh then
+        return false
+    end
+
+    if investigating_item ~= nil or is_map_open() then
+        return false
+    end
+
+    if SHCharacterStatics:IsCharacterInCutscene(my_pawn) == true then
+        return true
+    end
+
+    if is_save_menu_open() or is_jumping_into_hole(my_pawn) then
+        return true
+    end
+
+    if my_pawn.Traversal then
+        return true
+    end
+
+    if my_pawn.Movement and my_pawn.Movement.PushableComponent then
+        return true
+    end
+
+    if my_pawn.bHidden == true then
+        return false
+    end
+
+    return false
+end
+
 local last_camera_x = 0.0
 local last_camera_y = 0.0
 local last_head_z = nil
-local last_hmd_pos = Vector3d.new(0, 0, 0)
 local is_using_two_handed_weapon = false
 local is_using_melee_weapon = false
 local should_attach_flashlight = true
+
+local item_flip_map = {}
 
 uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_index, world_to_meters, position, rotation, is_double)
     is_allowing_vr_mode = should_vr_mode()
@@ -776,12 +845,6 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
         last_camera_x = position.x
         last_camera_y = position.y
         last_head_z = position.z -- So we dont get weird lerping from across the map when we re-enable VR mode
-
-        if hmd_component then
-            pcall(function()
-                last_hmd_pos = hmd_component:K2_GetComponentLocation()
-            end)
-        end
 
         if last_roomscale_value == true then
             if my_pawn ~= nil then
@@ -797,7 +860,7 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
 
             last_roomscale_value = false
 
-            -- Reveal mesh
+            --if mesh and should_display_mesh() then
             if my_pawn and mesh then
                 mesh:SetRenderInMainPass(true)
                 mesh:SetRenderInDepthPass(true)
@@ -852,7 +915,55 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
             local right_hand_rot = right_hand_component:K2_GetComponentRotation()
             local rotation_q = kismet_math_library:Conv_RotatorToQuaternion(right_hand_rot)
             local tilt_angle = 90
-            local tilt_q = kismet_math_library:Quat_MakeFromEuler(Vector3d.new(0, 0, tilt_angle))
+            local flip_angle = 0
+            local item_mesh = investigating_item.Mesh
+
+            -- Calculate flip angle
+            if item_mesh then
+                local anim_script_instance = item_mesh.AnimScriptInstance
+
+                if anim_script_instance then
+                    -- First we need to find the ItemFlipCurrentProgress property
+                    -- We do this because it has random numbers in the name
+                    local c = anim_script_instance:get_class()
+                    local caddr = c:get_address()
+                    if item_flip_map[caddr] == nil then
+                        local parent = c
+                        local found = false
+                        while parent ~= nil do
+                            local prop = parent:get_child_properties()
+                            while prop ~= nil do
+                                if prop:get_fname():to_string():find("ItemFlipCurrentProgress") then
+                                    item_flip_map[caddr] = { result = prop:get_fname():to_string() }
+                                    found = true
+                                    print("Found flip property: " .. prop:get_fname():to_string())
+                                    break
+                                end
+                                prop = prop:get_next()
+                            end
+                            
+                            if found then break end
+                            parent = parent:get_super()
+                        end
+
+                        if not found then
+                            print("Could not find flip property in class " .. c:get_full_name())
+                            item_flip_map[caddr] = { result = nil }
+                        end
+                    end
+
+                    local flip_prop = item_flip_map[caddr].result
+
+                    if flip_prop ~= nil then
+                        local flip_progress = anim_script_instance[flip_prop]
+                        if flip_progress then
+                            flip_angle = flip_progress * 180
+                        end
+                    end
+                end
+            end
+
+            local tilt_q = kismet_math_library:Quat_MakeFromEuler(Vector3d.new(0, flip_angle, tilt_angle))
             rotation_q = kismet_math_library:Multiply_QuatQuat(rotation_q, tilt_q)
             right_hand_rot = kismet_math_library:Quat_Rotator(rotation_q)
             investigating_item:K2_SetActorLocation(right_hand_pos, false, empty_hitresult, false)
@@ -1116,6 +1227,7 @@ uevr.sdk.callbacks.on_post_calculate_stereo_view_offset(function(device, view_in
             local operation_events = attach_parent_parent.LookOperation.OperationEvents
             if operation_events ~= nil then
                 operation_events.CurrentSettings.bIsSecuredOperation = false -- Dont want this forcing camera control
+                attach_parent_parent:ResetLookOperation(nil)
                 has_look_operation = true
             else
                 -- this is how we make the internal camera aim towards the HMD rotation
