@@ -21,6 +21,7 @@ local SHCameraAnimationExecutive_c = find_required_object("Class /Script/SHProto
 --print(string.format("0x%llx", AnimNode_Fabrik:get_class_default_object():get_address()))
 
 local api = uevr.api
+local vr = uevr.params.vr
 
 --[[local BlueprintUpdateAnimation = SHCharAnimationInstance_c:find_function("BlueprintUpdateAnimation")
 
@@ -227,27 +228,11 @@ local last_pos = Vector3d.new(0, 0, 0)
 local kismet_string_library = find_static_class("Class /Script/Engine.KismetStringLibrary")
 local kismet_math_library = find_static_class("Class /Script/Engine.KismetMathLibrary")
 local kismet_system_library = find_static_class("Class /Script/Engine.KismetSystemLibrary")
-if not kismet_string_library then
-    error("Cannot find KismetStringLibrary")
-    return
-end
 
-if not kismet_math_library then
-    error("Cannot find KismetMathLibrary")
-    return
-end
+local head_fname = kismet_string_library:Conv_StringToName("Face")
+local root_fname = kismet_string_library:Conv_StringToName("root")
+local muzzle_fx_fname = kismet_string_library:Conv_StringToName("FX_muzzle")
 
-if not kismet_system_library then
-    error("Cannot find KismetSystemLibrary")
-    return
-end
-
-local SHAnimIKHandIKSubcomp_c = api:find_uobject("Class /Script/SHProto.SHAnimHandIKSubcomp")
-
-if not SHAnimIKHandIKSubcomp_c then
-    error("Cannot find SHAnimIKHandIKSubcomp")
-    return
-end
 
 local game_engine_class = find_required_object("Class /Script/Engine.GameEngine")
 local widget_component_c = find_required_object("Class /Script/UMG.WidgetComponent")
@@ -561,10 +546,6 @@ local function spawn_hand_actors()
     end
 end
 
-local head_fname = kismet_string_library:Conv_StringToName("Face")
-local muzzle_fx_fname = kismet_string_library:Conv_StringToName("FX_muzzle")
-
-local vr = uevr.params.vr
 local camera_component = nil
 local my_pawn = nil
 local is_paused = false
@@ -837,6 +818,8 @@ local should_attach_flashlight = true
 
 local item_flip_map = {}
 
+local MAX_LERP_DIST = 500.0
+
 uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_index, world_to_meters, position, rotation, is_double)
     is_allowing_vr_mode = should_vr_mode()
 
@@ -993,8 +976,9 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
     forward = kismet_math_library:Conv_RotatorToVector(head_rot)
     forward = kismet_math_library:RotateAngleAxis(forward, 90, Vector3d.new(0, 0, 1))
 
-    head_pos = mesh:GetSocketLocation(head_fname)
     pawn_pos = my_pawn:K2_GetActorLocation()
+    head_pos = mesh:GetSocketLocation(head_fname)
+    head_pos.Z = pawn_pos.Z + 60.0
     --[[position.x = head_pos.X + (forward.X * 10)
     position.y = head_pos.Y + (forward.Y * 10)
     position.z = head_pos.Z + (forward.Z * 10)]]
@@ -1013,7 +997,7 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
     position.z = head_z
 
     if view_index == 1 then
-        if math.abs(wanted_x - camera_x) > 100.0 or math.abs(wanted_y - camera_y) > 100.0 then
+        if math.abs(wanted_x - camera_x) > MAX_LERP_DIST or math.abs(wanted_y - camera_y) > MAX_LERP_DIST then
             last_camera_x = wanted_x
             last_camera_y = wanted_y
         else
@@ -1021,7 +1005,7 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
             last_camera_y = camera_y
         end
         
-        if math.abs(wanted_z - head_z) > 100.0 then
+        if math.abs(wanted_z - head_z) > MAX_LERP_DIST then
             last_head_z = wanted_z
         else
             last_head_z = head_z
@@ -1168,7 +1152,7 @@ uevr.sdk.callbacks.on_post_calculate_stereo_view_offset(function(device, view_in
         local hmd_delta = hmd_pos - last_pos
 
         -- Reset the delta if it's too large
-        if hmd_delta:length() > 100.0 then
+        if hmd_delta:length() > MAX_LERP_DIST then
             hmd_delta = Vector3d.new(0, 0, 0)
         end
 
