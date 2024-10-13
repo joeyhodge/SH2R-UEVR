@@ -36,6 +36,7 @@ public:
 
 private:
     void hook_get_spread_shoot_vector();
+    void hook_melee_trace_check();
 
     void* on_get_end_trace_loc_internal(uevr::API::UObject* weapon, glm::f64vec2* in_angles, float sangles, glm::f64vec3* out_vec);
     static void* on_get_end_trace_loc(uevr::API::UObject* weapon, glm::f64vec2* in_angles, float sangles, glm::f64vec3* out_vec) {
@@ -56,4 +57,12 @@ private:
     GetEndTraceLocFn m_on_get_end_trace_loc_hook_fn{};
     using GetStartTraceLocFn = glm::f64vec3*(*)(uevr::API::UObject*, glm::f64vec3*);
     GetStartTraceLocFn m_trace_start_loc_hook_fn{};
+
+    int32_t m_melee_trace_check_hook_id{};
+    using MeleeTraceCheckFn = bool (*)(void*, float, float, float, void*, void*, void*);
+    MeleeTraceCheckFn m_melee_trace_check_hook_fn{};
+    bool on_melee_trace_check_internal(void*, float, float, float, void*, void*, void*);
+    static bool on_melee_trace_check(void* a1, float a2, float a3, float a4, void* a5, void* a6, void* a7) {
+        return g_plugin->on_melee_trace_check_internal(a1, a2, a3, a4, a5, a6, a7);
+    }
 };

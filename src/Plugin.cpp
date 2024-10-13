@@ -1,4 +1,5 @@
 #include <utility/Scan.hpp>
+#include <utility/Module.hpp>
 
 #include "Plugin.hpp"
 
@@ -14,6 +15,7 @@ void SHPlugin::on_initialize() {
     PLUGIN_LOG_ONCE("SHPlugin::on_initialize()");
 
     hook_get_spread_shoot_vector();
+    hook_melee_trace_check();
 }
 
 void SHPlugin::on_pre_engine_tick(uevr::API::UGameEngine* engine, float delta) {
@@ -65,12 +67,6 @@ int32_t hook_vtable_fn(std::wstring_view class_name, std::wstring_view fn_name, 
 
     //PLUGIN_LOG_ONCE("Real %ls: 0x%p (index: %d, offset 0x%X)", fn_name.data(), real_fn, offset / sizeof(void*), offset);
 
-    //auto result = safetyhook::create_inline(real_fn, destination);
-
-    //PLUGIN_LOG_ONCE("Hooked %ls", fn_name.data());
-
-    //return std::move(result);
-
     return API::get()->param()->functions->register_inline_hook((void*)real_fn, (void*)destination, original);
 }
 
@@ -80,6 +76,49 @@ int32_t hook_vtable_fn(std::wstring_view class_name, std::wstring_view fn_name, 
 void SHPlugin::hook_get_spread_shoot_vector() {
     m_on_get_end_trace_loc_hook_id = hook_vtable_fn(L"Class /Script/SHProto.SHItemWeaponRanged", L"GetEndTraceLoc", on_get_end_trace_loc, (void**)&m_on_get_end_trace_loc_hook_fn);
     m_trace_start_loc_hook_id = hook_vtable_fn(L"Class /Script/SHProto.SHItemWeaponRanged", L"GetStartTraceLoc", on_get_trace_start_loc, (void**)&m_trace_start_loc_hook_fn);
+}
+
+// Another one that most definitely cannot be done in Lua without FFI.
+void SHPlugin::hook_melee_trace_check() {
+    PLUGIN_LOG_ONCE("SHPlugin::hook_melee_trace_check()");
+
+    const auto game = utility::get_executable();
+    auto fn = utility::find_function_from_string_ref(game, "MeleeWeaponEnvTrace");
+
+    if (!fn) {
+        PLUGIN_LOG_ONCE_ERROR("Failed to find MeleeWeaponEnvTrace");
+        return;
+    }
+
+    fn = utility::find_function_start_with_call(*fn); // Looks for E8 call to the function to locate the start
+
+    if (!fn) {
+        PLUGIN_LOG_ONCE_ERROR("Failed to find MeleeWeaponEnvTrace start");
+        return;
+    }
+
+    PLUGIN_LOG_ONCE("MeleeWeaponEnvTrace: 0x%p", (void*)*fn);
+
+    m_melee_trace_check_hook_id = API::get()->param()->functions->register_inline_hook((void*)*fn, (void*)on_melee_trace_check, (void**)&m_melee_trace_check_hook_fn);
+
+    if (m_melee_trace_check_hook_id == -1) {
+        PLUGIN_LOG_ONCE_ERROR("Failed to hook MeleeWeaponEnvTrace");
+        return;
+    }
+
+    PLUGIN_LOG_ONCE("Hooked MeleeWeaponEnvTrace");
+}
+
+bool SHPlugin::on_melee_trace_check_internal(void* a1, float a2, float a3, float a4, void* a5, void* a6, void* a7) {
+    PLUGIN_LOG_ONCE("SHPlugin::on_melee_trace_check_internal(0x%p, %f, %f, %f, 0x%p, 0x%p, 0x%p)", a1, a2, a3, a4, a5, a6, a7);
+
+    const bool result = m_melee_trace_check_hook_fn(a1, a2, a3, a4, a5, a6, a7);
+
+    if (result) {
+        API::get()->dispatch_lua_event("OnMeleeTraceSuccess", "");
+    }
+
+    return result;
 }
 
 glm::f64vec3* SHPlugin::on_get_trace_start_loc_internal(uevr::API::UObject* weapon, glm::f64vec3* out_vec) {
