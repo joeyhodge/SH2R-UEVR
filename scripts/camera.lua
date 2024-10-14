@@ -1187,12 +1187,13 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
     forward = kismet_math_library:Conv_RotatorToVector(head_rot)
     forward = kismet_math_library:RotateAngleAxis(forward, 90, Vector3d.new(0, 0, 1))
 
-    pawn_pos = my_pawn:K2_GetActorLocation()
+    --pawn_pos = my_pawn:K2_GetActorLocation()
+    --pawn_pos = mesh:K2_GetComponentLocation()
+    --pawn_pos = mesh:GetSocketLocation(root_fname)
+    pawn_pos = my_pawn.RootComponent:K2_GetComponentLocation()
     head_pos = mesh:GetSocketLocation(head_fname)
     head_pos.Z = pawn_pos.Z + 60.0
-    --[[position.x = head_pos.X + (forward.X * 10)
-    position.y = head_pos.Y + (forward.Y * 10)
-    position.z = head_pos.Z + (forward.Z * 10)]]
+
     if not last_head_z then
         last_head_z = head_pos.Z
     end
