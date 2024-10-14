@@ -109,10 +109,136 @@ void SHPlugin::hook_melee_trace_check() {
     PLUGIN_LOG_ONCE("Hooked MeleeWeaponEnvTrace");
 }
 
-bool SHPlugin::on_melee_trace_check_internal(void* a1, float a2, float a3, float a4, void* a5, void* a6, void* a7) {
-    PLUGIN_LOG_ONCE("SHPlugin::on_melee_trace_check_internal(0x%p, %f, %f, %f, 0x%p, 0x%p, 0x%p)", a1, a2, a3, a4, a5, a6, a7);
+bool SHPlugin::on_melee_trace_check_internal(API::UObject* melee_item, float a2, float a3, float a4, void* a5, void* a6, uevr::API::TArray<SHPlugin::FHitResult>& hit_results) {
+    PLUGIN_LOG_ONCE("SHPlugin::on_melee_trace_check_internal(0x%p, %f, %f, %f, 0x%p, 0x%p, %d)", melee_item, a2, a3, a4, a5, a6, hit_results.count);
 
-    const bool result = m_melee_trace_check_hook_fn(a1, a2, a3, a4, a5, a6, a7);
+    if (melee_item == nullptr) {
+        return false;
+    }
+
+    //const bool result = m_melee_trace_check_hook_fn(a1, a2, a3, a4, a5, a6, hit_results);
+    //auto orig_result = m_melee_trace_check_hook_fn(melee_item, a2, a3, a4, a5, a6, hit_results);
+    //hit_results.~TArray();
+
+    // Let's try and do it ourselves
+    static const auto kismet_system_library_c = API::get()->find_uobject<API::UClass>(L"Class /Script/Engine.KismetSystemLibrary");
+    static const auto kismet_system_library = kismet_system_library_c->get_class_default_object();
+
+    static auto kismet_math_library_c = API::get()->find_uobject<API::UClass>(L"Class /Script/Engine.KismetMathLibrary");
+    static auto kismet_math_library = kismet_math_library_c->get_class_default_object();
+
+    struct {
+        API::UObject* world_context_object{};
+        glm::f64vec3 start{};
+        glm::f64vec3 end{};
+        float radius{1.0f};
+        float half_height{1.0f};
+        uint8_t trace_channel{3};
+        bool trace_complex{true};
+        API::TArray<API::UObject*> actors_to_ignore{};
+        uint8_t draw_debug_type{0};
+        FHitResult hit_result{};
+        bool ignore_self;
+        float trace_color[4]{1.0f, 0.0f, 0.0f, 1.0f};
+        float trace_hit_color[4]{0.0f, 1.0f, 0.0f, 1.0f};
+        float draw_time{1.0f};
+        bool return_value{false};
+    } params;
+
+    auto engine = API::get()->get_engine();
+    auto viewport = engine != nullptr ? engine->get_property<API::UObject*>(L"GameViewport") : nullptr;
+    auto world = viewport != nullptr ? viewport->get_property<API::UObject*>(L"World") : nullptr;
+
+    params.world_context_object = world;
+    params.actors_to_ignore.data = (API::UObject**)API::FMalloc::get()->malloc(2 * sizeof(API::UObject*));
+    params.actors_to_ignore.count = 2;
+    params.actors_to_ignore.capacity = 2;
+    params.actors_to_ignore.data[0] = melee_item;
+    params.actors_to_ignore.data[1] = API::get()->get_local_pawn(0);
+    params.ignore_self = true;
+
+    auto mesh_component = melee_item->get_property<API::UObject*>(L"Mesh");
+
+    struct Transform {
+        char padding[0x60]; // We do not care what's in here  
+    } mesh_transform;
+    static_assert(sizeof(Transform) == 0x60, "Transform size mismatch");
+
+    struct BoxSphereBounds {
+        glm::f64vec3 origin{};
+        glm::f64vec3 box_extent{};
+        double sphere_radius{};
+    } mesh_bounds;
+    static_assert(sizeof(BoxSphereBounds) == 0x38, "BoxSphereBounds size mismatch");
+
+    if (mesh_component != nullptr) {
+        mesh_component->call_function(L"K2_GetComponentToWorld", &mesh_transform);
+
+        auto skeletal_mesh = mesh_component->get_property<API::UObject*>(L"SkeletalMesh");
+
+        if (skeletal_mesh != nullptr) {
+            skeletal_mesh->call_function(L"GetBounds", &mesh_bounds);
+
+            int32_t largest_axis{0};
+            double largest_extent{0.0};
+
+            for (int32_t i = 0; i < 3; i++) {
+                if (glm::abs(mesh_bounds.box_extent[i]) > largest_extent) {
+                    largest_extent = glm::abs(mesh_bounds.box_extent[i]);
+                    largest_axis = i;
+                }
+            }
+
+            struct {
+                Transform transform;
+                glm::f64vec3 location;
+                glm::f64vec3 result;
+            } transform_location_params;
+
+            transform_location_params.transform = mesh_transform;
+            transform_location_params.location = mesh_bounds.origin;
+            transform_location_params.location[largest_axis] -= mesh_bounds.sphere_radius; // Lengthwise along the mesh
+
+            kismet_math_library->call_function(L"TransformLocation", &transform_location_params);
+
+            params.start = transform_location_params.result;
+
+            transform_location_params.location = mesh_bounds.origin;
+            transform_location_params.location[largest_axis] += mesh_bounds.sphere_radius; // Lengthwise along the mesh
+
+            kismet_math_library->call_function(L"TransformLocation", &transform_location_params);
+
+            glm::f64vec3 short_axes{mesh_bounds.box_extent};
+            short_axes[largest_axis] = 0.0;
+
+            params.end = transform_location_params.result;
+            params.radius = glm::length(short_axes);
+            //params.half_height = ((float)mesh_bounds.box_extent[largest_axis] / 2.0f) + params.radius;
+            params.half_height = 0.001f;
+        }
+    }
+
+    //kismet_system_library->call_function(L"LineTraceSingle", &params);
+    //kismet_system_library->call_function(L"SphereTraceSingle", &params);
+    kismet_system_library->call_function(L"CapsuleTraceSingle", &params);
+
+    const bool result = params.hit_result.bBlockingHit;
+
+    if (result) {
+        if (hit_results.count >= hit_results.capacity) {
+            size_t new_capacity = std::max(hit_results.capacity * 2, 2);
+
+            if (hit_results.data != nullptr) {
+                hit_results.data = (FHitResult*)API::FMalloc::get()->realloc(hit_results.data, new_capacity * sizeof(FHitResult));
+            } else {
+                hit_results.data = (FHitResult*)API::FMalloc::get()->malloc(new_capacity * sizeof(FHitResult));
+            }
+
+            hit_results.capacity = new_capacity;
+        }
+
+        memcpy(&hit_results.data[hit_results.count++], &params.hit_result, sizeof(FHitResult));
+    }
 
     if (result) {
         API::get()->dispatch_lua_event("OnMeleeTraceSuccess", "");

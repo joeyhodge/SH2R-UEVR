@@ -49,8 +49,7 @@ private:
     }
 
     bool m_hooked{false};
-    //safetyhook::InlineHook m_on_get_end_trace_loc_hook;
-    //safetyhook::InlineHook m_trace_start_loc_hook;
+
     int32_t m_on_get_end_trace_loc_hook_id{};
     int32_t m_trace_start_loc_hook_id{};
     using GetEndTraceLocFn = void*(*)(uevr::API::UObject*, glm::f64vec2*, float, glm::f64vec3*);
@@ -58,11 +57,42 @@ private:
     using GetStartTraceLocFn = glm::f64vec3*(*)(uevr::API::UObject*, glm::f64vec3*);
     GetStartTraceLocFn m_trace_start_loc_hook_fn{};
 
+    struct FHitResult {
+        int32_t FaceIndex;
+        float Time;
+        float Distance;
+        glm::f64vec3 Location;
+        glm::f64vec3 ImpactPoint;
+        glm::f64vec3 Normal;
+        glm::f64vec3 ImpactNormal;
+        glm::f64vec3 TraceStart;
+        glm::f64vec3 TraceEnd;
+        float PenetrationDepth;
+        int32_t MyItem;
+        int32_t Item;
+        uint8_t ElementIndex;
+        uint8_t bBlockingHit : 1;
+        uint8_t bStartPenetrating : 1;
+        uint32_t PhysMaterialIndex;
+        uint32_t PhysMaterialSerialNumber;
+        uint32_t HitObject_ActorIndex;
+        uint32_t HitObject_ActorSerialNumber;
+        uint32_t HitObject_ManagerIndex;
+        uint32_t HitObject_ManagerSerialNumber;
+        uint32_t HitObject_ActorInstanceIndex;
+        uint32_t HitObject_ActorInstanceUID;
+        uint32_t Component_Index;
+        uint32_t Component_SerialNumber;
+        uevr::API::FName BoneName;
+        uevr::API::FName MyBoneName;
+    };
+    static_assert(sizeof(FHitResult) == 0xE8, "FHitResult size mismatch");
+
     int32_t m_melee_trace_check_hook_id{};
-    using MeleeTraceCheckFn = bool (*)(void*, float, float, float, void*, void*, void*);
+    using MeleeTraceCheckFn = bool (*)(uevr::API::UObject*, float, float, float, void*, void*, uevr::API::TArray<FHitResult>&);
     MeleeTraceCheckFn m_melee_trace_check_hook_fn{};
-    bool on_melee_trace_check_internal(void*, float, float, float, void*, void*, void*);
-    static bool on_melee_trace_check(void* a1, float a2, float a3, float a4, void* a5, void* a6, void* a7) {
-        return g_plugin->on_melee_trace_check_internal(a1, a2, a3, a4, a5, a6, a7);
+    bool on_melee_trace_check_internal(uevr::API::UObject*, float, float, float, void*, void*, uevr::API::TArray<FHitResult>&);
+    static bool on_melee_trace_check(uevr::API::UObject* a1, float a2, float a3, float a4, void* a5, void* a6, uevr::API::TArray<FHitResult>& hit_results) {
+        return g_plugin->on_melee_trace_check_internal(a1, a2, a3, a4, a5, a6, hit_results);
     }
 };
