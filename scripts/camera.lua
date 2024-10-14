@@ -238,6 +238,7 @@ local muzzle_fx_fname = kismet_string_library:Conv_StringToName("FX_muzzle")
 local game_engine_class = find_required_object("Class /Script/Engine.GameEngine")
 local widget_component_c = find_required_object("Class /Script/UMG.WidgetComponent")
 local scene_component_c = find_required_object("Class /Script/Engine.SceneComponent")
+local motion_controller_component_c = find_required_object("Class /Script/HeadMountedDisplay.MotionControllerComponent")
 local actor_c = find_required_object("Class /Script/Engine.Actor")
 local ftransform_c = find_required_object("ScriptStruct /Script/CoreUObject.Transform")
 local temp_transform = StructObject.new(ftransform_c)
@@ -280,9 +281,11 @@ end
 
 local AnimNotify_MeleeAttackCheck_c = find_required_object("Class /Script/SHProto.AnimNotify_MeleeAttackCheck")
 local AnimNotify_MeleeAttackCheck_Notify = AnimNotify_MeleeAttackCheck_c:find_function("Received_Notify")
+local AnimNotify_ModifyCombatInputMode_c = find_required_object("Class /Script/SHProto.AnimNotify_ModifyCombatInputMode")
 local melee_montage = nil
 local ANIMNOTIFY_NOTIFY_VTABLE_INDEX = 89
 local last_anim_notify_melee_obj = nil
+local last_anim_notify_modify_combat_input_obj = nil
 
 if AnimNotify_MeleeAttackCheck_Notify then
     AnimNotify_MeleeAttackCheck_Notify:set_function_flags(AnimNotify_MeleeAttackCheck_Notify:get_function_flags() | 0x400) -- Mark as native
@@ -306,15 +309,21 @@ if AnimNotify_MeleeAttackCheck_Notify then
     end)
 end
 
-local accumulated_melee_time = 0.0
 local AnimMontage_c = api:find_uobject("Class /Script/Engine.AnimMontage")
-local last_right_hand_raw_pos = Vector3f.new(0,0,0)
 local melee_attack_name = kismet_string_library:Conv_StringToName("MeleeAttack")
 local triggered_melee_recently = false
 
+local melee_data = {
+    accumulated_time = 0.0,
+    right_hand_pos_raw = UEVR_Vector3f.new(),
+    right_hand_q_raw = UEVR_Quaternionf.new(),
+    right_hand_pos = Vector3f.new(0, 0, 0),
+    last_right_hand_raw_pos = Vector3f.new(0, 0, 0),
+}
+
 uevr.sdk.callbacks.on_lua_event(function(event_name, event_string)
     if event_name == "OnMeleeTraceSuccess" then
-        accumulated_melee_time = 0.0
+        melee_data.accumulated_time = 0.0
 
         if vr.is_using_controllers() then
             vr.trigger_haptic_vibration(0, 0.1, 0.5, 1.0, vr.get_right_joystick_source())   
@@ -322,13 +331,6 @@ uevr.sdk.callbacks.on_lua_event(function(event_name, event_string)
         end
     end
 end)
-
-local melee_data = {
-    right_hand_pos_raw = UEVR_Vector3f.new(),
-    right_hand_q_raw = UEVR_Quaternionf.new(),
-    right_hand_pos = Vector3f.new(0, 0, 0),
-    last_right_hand_raw_pos = Vector3f.new(0, 0, 0),
-}
 
 uevr.sdk.callbacks.on_pre_engine_tick(function(engine_voidptr, delta)
     if not right_hand_component or not left_hand_component then
@@ -367,11 +369,19 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine_voidptr, delta)
         end
     end
 
-    if not last_anim_notify_melee_obj then
+    if not last_anim_notify_melee_obj or not UEVR_UObjectHook.exists(last_anim_notify_melee_obj) or not last_anim_notify_melee_obj:is_a(AnimNotify_MeleeAttackCheck_c) then
         last_anim_notify_melee_obj = AnimNotify_MeleeAttackCheck_c:get_class_default_object() -- Will this work? let's find out
 
         if last_anim_notify_melee_obj then
             print("Got melee notify obj")
+        end
+    end
+
+    if not last_anim_notify_modify_combat_input_obj or not UEVR_UObjectHook.exists(last_anim_notify_modify_combat_input_obj) or not last_anim_notify_modify_combat_input_obj:is_a(AnimNotify_ModifyCombatInputMode_c) then
+        last_anim_notify_modify_combat_input_obj = AnimNotify_ModifyCombatInputMode_c:get_class_default_object() -- Will this work? let's find out
+
+        if last_anim_notify_modify_combat_input_obj then
+            print("Got combat input notify obj")
         end
     end
 
@@ -387,9 +397,17 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine_voidptr, delta)
             local anim_instance = mesh.AnimScriptInstance
 
             if animation and anim_instance and last_anim_notify_melee_obj then
-                --[[local weapon = anim_instance:GetEquippedWeapon()
+                local weapon = anim_instance:GetEquippedWeapon()
 
-                if weapon then
+                --[[if weapon and weapon.GetCurrentMeleeAttackEnemyTarget ~= nil then
+                    local target = weapon:GetCurrentMeleeAttackEnemyTarget()
+
+                    if target ~= nil then
+                        print("Target: " .. target:get_full_name())
+                    end
+                end]]
+
+                --[[if weapon then
                     local overlap = {}
                     
                     weapon:GetOverlappingActors(overlap, actor_c)
@@ -437,9 +455,9 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine_voidptr, delta)
                     local attack = combat_anim_subcomp.Attack
                     if attack then
                         local animdata = attack.PlayAnimationData
-                        
+
                         if animdata then
-                            if is_playing_melee_attack then
+                            if animdata.UseRootMotion then
                                 local current_montage = attack.CurrentMontage
                                 animdata.UseRootMotion = false
 
@@ -458,12 +476,12 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine_voidptr, delta)
                     end
                 end
 
-                if accumulated_melee_time > 0.1 then
+                if melee_data.accumulated_time > 0.1 then
                     triggered_melee_recently = false
                 end
 
-                accumulated_melee_time = accumulated_melee_time + delta
-                if accumulated_melee_time > 0.5 and (velocity:length() >= 2.5) then
+                melee_data.accumulated_time = melee_data.accumulated_time + delta
+                if melee_data.accumulated_time > 0.5 and (velocity:length() >= 2.5) then
                     --anim_instance:Montage_Play(melee_montage, 1.0, 0, 0.3, false, {})
                     --anim_instance:PlaySlotAnimationAsDynamicMontage(melee_montage, melee_attack_name, 0.0, 0.0, 1.0, 1, 0.0, 0.0)
                     if combat_anim_subcomp then
@@ -472,9 +490,31 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine_voidptr, delta)
                             if last_anim_notify_melee_obj then
                                 -- Setting these allows the AnimNotify to actually hit stuff
                                 attack.CurrentMontage = melee_montage
-                                attack.InputData = melee_montage    
+                                attack.InputData = melee_montage
 
+                                --last_anim_notify_modify_combat_input_obj.RequiredInputMode = 10
+                                --last_anim_notify_modify_combat_input_obj:DANGEROUS_call_member_virtual(ANIMNOTIFY_NOTIFY_VTABLE_INDEX, mesh, melee_montage)
+
+                                -- Triggers Notify function, which does the melee attack traces and damage
                                 last_anim_notify_melee_obj:DANGEROUS_call_member_virtual(ANIMNOTIFY_NOTIFY_VTABLE_INDEX, mesh, melee_montage)
+
+                                --[[if not triggered_melee_recently then
+                                    local equipped_weapon = anim_instance:GetEquippedWeapon()
+
+                                    if equipped_weapon then
+                                        -- Nudge the weapon slightly and try again
+                                        local root = equipped_weapon.RootComponent
+                                        local root_pos = equipped_weapon:K2_GetActorLocation()
+                                        local up_vector = root:GetUpVector()
+
+                                        equipped_weapon:K2_SetActorLocation(root_pos + (up_vector * 100.0), false, reusable_hit_result, false)
+
+                                        -- Try again
+                                        last_anim_notify_melee_obj:DANGEROUS_call_member_virtual(ANIMNOTIFY_NOTIFY_VTABLE_INDEX, mesh, melee_montage)
+
+                                        equipped_weapon:K2_SetActorLocation(root_pos, false, reusable_hit_result, false)
+                                    end
+                                end]]
 
                                 if not triggered_melee_recently then
                                     vr.trigger_haptic_vibration(0, 0.1, 0.1, 0.1, vr.get_right_joystick_source()) -- Very light vibration
@@ -710,8 +750,10 @@ local function spawn_hand_actors()
     print("Spawned hand actors")
 
     -- Add scene components to the hand actors
-    left_hand_component = left_hand_actor:AddComponentByClass(scene_component_c, false, temp_transform, false)
-    right_hand_component = right_hand_actor:AddComponentByClass(scene_component_c, false, temp_transform, false)
+    --left_hand_component = left_hand_actor:AddComponentByClass(scene_component_c, false, temp_transform, false)
+    --right_hand_component = right_hand_actor:AddComponentByClass(scene_component_c, false, temp_transform, false)
+    left_hand_component = left_hand_actor:AddComponentByClass(motion_controller_component_c, false, temp_transform, false)
+    right_hand_component = right_hand_actor:AddComponentByClass(motion_controller_component_c, false, temp_transform, false)
     hmd_component = hmd_actor:AddComponentByClass(scene_component_c, false, temp_transform, false)
 
     if left_hand_component == nil then
@@ -729,13 +771,19 @@ local function spawn_hand_actors()
         return
     end
 
+    left_hand_component.MotionSource = kismet_string_library:Conv_StringToName("Left")
+    right_hand_component.MotionSource = kismet_string_library:Conv_StringToName("Right")
+    left_hand_component.Hand = 0
+    right_hand_component.Hand = 1
+
     print("Added scene components")
 
     left_hand_actor:FinishAddComponent(left_hand_component, false, temp_transform)
     right_hand_actor:FinishAddComponent(right_hand_component, false, temp_transform)
     hmd_actor:FinishAddComponent(hmd_component, false, temp_transform)
 
-    local leftstate = UEVR_UObjectHook.get_or_add_motion_controller_state(left_hand_component)
+    -- We don't need to add these, UObjectHook will handle the placement of motion controller components automatically
+    --[[local leftstate = UEVR_UObjectHook.get_or_add_motion_controller_state(left_hand_component)
 
     if leftstate then
         leftstate:set_hand(0) -- Left hand
@@ -747,8 +795,9 @@ local function spawn_hand_actors()
     if rightstate then
         rightstate:set_hand(1) -- Right hand
         rightstate:set_permanent(true)
-    end
+    end]]
 
+    -- The HMD is the only one we need to add manually as UObjectHook doesn't support motion controller components as the HMD
     local hmdstate = UEVR_UObjectHook.get_or_add_motion_controller_state(hmd_component)
 
     if hmdstate then
