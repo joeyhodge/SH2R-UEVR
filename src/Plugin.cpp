@@ -1,5 +1,8 @@
+#include <iostream>
+
 #include <utility/Scan.hpp>
 #include <utility/Module.hpp>
+#include <utility/String.hpp>
 
 #include "Plugin.hpp"
 
@@ -116,9 +119,10 @@ bool SHPlugin::on_melee_trace_check_internal(API::UObject* melee_item, float a2,
         return false;
     }
 
-    //const bool result = m_melee_trace_check_hook_fn(a1, a2, a3, a4, a5, a6, hit_results);
-    //auto orig_result = m_melee_trace_check_hook_fn(melee_item, a2, a3, a4, a5, a6, hit_results);
-    //hit_results.~TArray();
+    if (!API::get()->param()->vr->is_using_controllers()) {
+        // Just do what the game originally wanted to do
+        return m_melee_trace_check_hook_fn(melee_item, a2, a3, a4, a5, a6, hit_results);
+    }
 
     // Let's try and do it ourselves
     static const auto kismet_system_library_c = API::get()->find_uobject<API::UClass>(L"Class /Script/Engine.KismetSystemLibrary");
@@ -137,7 +141,8 @@ bool SHPlugin::on_melee_trace_check_internal(API::UObject* melee_item, float a2,
         bool trace_complex{true};
         API::TArray<API::UObject*> actors_to_ignore{};
         uint8_t draw_debug_type{0};
-        FHitResult hit_result{};
+        //FHitResult hit_result{};
+        API::TArray<FHitResult> hit_results{}; // For multi variant
         bool ignore_self;
         float trace_color[4]{1.0f, 0.0f, 0.0f, 1.0f};
         float trace_hit_color[4]{0.0f, 1.0f, 0.0f, 1.0f};
@@ -197,54 +202,135 @@ bool SHPlugin::on_melee_trace_check_internal(API::UObject* melee_item, float a2,
 
             transform_location_params.transform = mesh_transform;
             transform_location_params.location = mesh_bounds.origin;
-            transform_location_params.location[largest_axis] -= mesh_bounds.sphere_radius; // Lengthwise along the mesh
+            transform_location_params.location[largest_axis] -= mesh_bounds.box_extent[largest_axis]; // Lengthwise along the mesh
 
             kismet_math_library->call_function(L"TransformLocation", &transform_location_params);
 
             params.start = transform_location_params.result;
 
             transform_location_params.location = mesh_bounds.origin;
-            transform_location_params.location[largest_axis] += mesh_bounds.sphere_radius; // Lengthwise along the mesh
+            transform_location_params.location[largest_axis] += mesh_bounds.box_extent[largest_axis]; // Lengthwise along the mesh
 
             kismet_math_library->call_function(L"TransformLocation", &transform_location_params);
 
             glm::f64vec3 short_axes{mesh_bounds.box_extent};
             short_axes[largest_axis] = 0.0;
 
+            double biggest_short_axis{0.0};
+
+            for (int32_t i = 0; i < 3; i++) {
+                if (glm::abs(short_axes[i]) > biggest_short_axis) {
+                    biggest_short_axis = glm::abs(short_axes[i]);
+                }
+            }
+
             params.end = transform_location_params.result;
-            params.radius = glm::length(short_axes);
-            //params.half_height = ((float)mesh_bounds.box_extent[largest_axis] / 2.0f) + params.radius;
-            params.half_height = 0.001f;
+            params.radius = (float)biggest_short_axis;
+            params.half_height = (float)(mesh_bounds.box_extent[largest_axis] / 2.0);
+            //params.half_height = 0.001f;
         }
     }
 
     //kismet_system_library->call_function(L"LineTraceSingle", &params);
     //kismet_system_library->call_function(L"SphereTraceSingle", &params);
-    kismet_system_library->call_function(L"CapsuleTraceSingle", &params);
 
-    const bool result = params.hit_result.bBlockingHit;
+    auto add_uobject_to_tarray = [](API::TArray<API::UObject*>& array, API::UObject* obj) {
+        if (array.count >= array.capacity) {
+            size_t new_capacity = std::max(array.capacity * 2, 2);
 
-    if (result) {
-        if (hit_results.count >= hit_results.capacity) {
-            size_t new_capacity = std::max(hit_results.capacity * 2, 2);
-
-            if (hit_results.data != nullptr) {
-                hit_results.data = (FHitResult*)API::FMalloc::get()->realloc(hit_results.data, new_capacity * sizeof(FHitResult));
+            if (array.data != nullptr) {
+                array.data = (API::UObject**)API::FMalloc::get()->realloc(array.data, new_capacity * sizeof(API::UObject*));
             } else {
-                hit_results.data = (FHitResult*)API::FMalloc::get()->malloc(new_capacity * sizeof(FHitResult));
+                array.data = (API::UObject**)API::FMalloc::get()->malloc(new_capacity * sizeof(API::UObject*));
             }
 
-            hit_results.capacity = new_capacity;
+            array.capacity = new_capacity;
         }
 
-        memcpy(&hit_results.data[hit_results.count++], &params.hit_result, sizeof(FHitResult));
+        array.data[array.count++] = obj;
+    };
+
+    bool any_succeed = false;
+
+    for (size_t j = 0; j < 2; ++j) {
+        if (any_succeed) {
+            //break;
+        }
+
+        if (j == 1) {
+            std::swap(params.start, params.end); // For some reason the game might only hit enemies if the impact hits a certain way
+        }
+
+        // Do a few traces, we should hit multiple actors/components.
+        kismet_system_library->call_function(L"CapsuleTraceMulti", &params);
+
+        for (size_t i = 0; i < params.hit_results.count; i++) {
+            auto& hit_result = params.hit_results.data[i];
+            const bool result = hit_result.bBlockingHit && params.return_value;
+
+            if (result) {
+                if (hit_result.HitObject_ActorIndex > 0) {
+                    auto actor_item = API::FUObjectArray::get()->get_item(hit_result.HitObject_ActorIndex);
+
+                    if (actor_item != nullptr) {
+                        auto actor = actor_item->object;
+
+                        if (actor != nullptr) {
+                            API::get()->log_info("Hit actor: %s", utility::narrow(actor->get_full_name()).c_str());
+                            std::cout << "Hit actor: " << utility::narrow(actor->get_full_name()) << std::endl;
+
+                            //add_uobject_to_tarray(params.actors_to_ignore, actor);
+                        }
+                    }
+
+                    auto component_item = API::FUObjectArray::get()->get_item(hit_result.Component_Index);
+
+                    if (component_item != nullptr) {
+                        auto component = component_item->object;
+
+                        if (component != nullptr) {
+                            API::get()->log_info("Hit component: %s", utility::narrow(component->get_full_name()).c_str());
+                            std::cout << "Hit component: " << utility::narrow(component->get_full_name()) << std::endl;
+
+                            /*static const auto capsule_component_c = API::get()->find_uobject<API::UClass>(L"Class /Script/Engine.CapsuleComponent");
+
+                            if (component->is_a(capsule_component_c)) {
+                                continue; // We don't want to hit capsule components
+                            }*/
+
+                            static const auto mesh_component_c = API::get()->find_uobject<API::UClass>(L"Class /Script/Engine.MeshComponent");
+
+                            if (!component->is_a(mesh_component_c)) {
+                                continue; // We only want to hit mesh components
+                            }
+                        }
+                    }
+                }
+
+                if (hit_results.count >= hit_results.capacity) {
+                    size_t new_capacity = std::max(hit_results.capacity * 2, 2);
+
+                    if (hit_results.data != nullptr) {
+                        hit_results.data = (FHitResult*)API::FMalloc::get()->realloc(hit_results.data, new_capacity * sizeof(FHitResult));
+                    } else {
+                        hit_results.data = (FHitResult*)API::FMalloc::get()->malloc(new_capacity * sizeof(FHitResult));
+                    }
+
+                    hit_results.capacity = new_capacity;
+                }
+
+                memcpy(&hit_results.data[hit_results.count++], &hit_result, sizeof(FHitResult));
+
+                any_succeed = true;
+            }
+        }
     }
 
-    if (result) {
+    if (any_succeed) {
         API::get()->dispatch_lua_event("OnMeleeTraceSuccess", "");
     }
 
-    return result;
+    return any_succeed;
 }
 
 glm::f64vec3* SHPlugin::on_get_trace_start_loc_internal(uevr::API::UObject* weapon, glm::f64vec3* out_vec) {
