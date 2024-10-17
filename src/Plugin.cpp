@@ -251,6 +251,8 @@ bool SHPlugin::on_melee_trace_check_internal(API::UObject* melee_item, float a2,
     };
 
     bool any_succeed = false;
+    bool any_enemy = false;
+    bool any_glass = false;
 
     for (size_t j = 0; j < 2; ++j) {
         if (any_succeed) {
@@ -304,6 +306,15 @@ bool SHPlugin::on_melee_trace_check_internal(API::UObject* melee_item, float a2,
                                 continue; // We only want to hit mesh components
                             }
 
+                            static const auto skeletal_mesh_component_c = API::get()->find_uobject<API::UClass>(L"Class /Script/Engine.SkeletalMeshComponent");
+                            static const auto breakable_glass_component_c = API::get()->find_uobject<API::UClass>(L"Class /Script/SHProto.SHBreakableGlassComponent");
+
+                            if (component->is_a(skeletal_mesh_component_c)) {
+                                any_enemy = true;
+                            } else if (component->is_a(breakable_glass_component_c)) {
+                                any_glass = true;
+                            }
+
                             auto& bone_name = hit_result.BoneName;
 
                             if (bone_name.number >= 0 || bone_name.comparison_index >= 0) {
@@ -315,7 +326,7 @@ bool SHPlugin::on_melee_trace_check_internal(API::UObject* melee_item, float a2,
                                 } impulse_params;
 
                                 //impulse_params.impulse = glm::f64vec3{0.0, 0.0, 1000.0};
-                                impulse_params.impulse = hit_result.ImpactNormal * -1000.0;
+                                impulse_params.impulse = hit_result.ImpactNormal * -5000.0;
                                 impulse_params.location = hit_result.ImpactPoint;
                                 impulse_params.bone_name = bone_name;
 
@@ -345,7 +356,8 @@ bool SHPlugin::on_melee_trace_check_internal(API::UObject* melee_item, float a2,
     }
 
     if (any_succeed) {
-        API::get()->dispatch_lua_event("OnMeleeTraceSuccess", "");
+        std::string_view event_data = any_enemy ? "Enemy" : (any_glass ? "Glass" : "Environment");
+        API::get()->dispatch_lua_event("OnMeleeTraceSuccess", event_data.data());
     }
 
     return any_succeed;
