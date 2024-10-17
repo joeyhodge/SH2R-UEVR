@@ -223,7 +223,7 @@ local function detach_flashlight(pawn)
     enqueue_detach_flashlight = true
 end
 
-local last_rot = nil
+local last_rot = Vector3d.new(0, 0, 0)
 local last_pos = Vector3d.new(0, 0, 0)
 
 local kismet_string_library = find_static_class("Class /Script/Engine.KismetStringLibrary")
@@ -314,7 +314,9 @@ local melee_attack_name = kismet_string_library:Conv_StringToName("MeleeAttack")
 local triggered_melee_recently = false
 
 local melee_data = {
+    cooldown_time = 0.0,
     accumulated_time = 0.0,
+    last_tried_melee_time = 1000.0,
     right_hand_pos_raw = UEVR_Vector3f.new(),
     right_hand_q_raw = UEVR_Quaternionf.new(),
     right_hand_pos = Vector3f.new(0, 0, 0),
@@ -324,9 +326,21 @@ local melee_data = {
 uevr.sdk.callbacks.on_lua_event(function(event_name, event_string)
     if event_name == "OnMeleeTraceSuccess" then
         melee_data.accumulated_time = 0.0
+        melee_data.last_tried_melee_time = 0.0
+
+        if event_string == "Enemy" then
+            melee_data.cooldown_time = 0.5
+        elseif event_string == "Glass" then
+            melee_data.cooldown_time = 0.5
+        else
+            melee_data.cooldown_time = 0.033 -- Environment traces can be more frequent
+        end
+
+        melee_data.last_tried_melee_time = 1000.0
 
         if vr.is_using_controllers() then
-            vr.trigger_haptic_vibration(0, 0.1, 0.5, 1.0, vr.get_right_joystick_source())   
+            vr.trigger_haptic_vibration(0, 0.1, 0.5, 1.0, vr.get_right_joystick_source())
+
             triggered_melee_recently = true
         end
     end
@@ -395,56 +409,29 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine_voidptr, delta)
         if mesh then
             local animation = pawn.Animation
             local anim_instance = mesh.AnimScriptInstance
+            local weapon = anim_instance and anim_instance:GetEquippedWeapon() or nil
 
-            if animation and anim_instance and last_anim_notify_melee_obj then
-                local weapon = anim_instance:GetEquippedWeapon()
-
-                --[[if weapon and weapon.GetCurrentMeleeAttackEnemyTarget ~= nil then
-                    local target = weapon:GetCurrentMeleeAttackEnemyTarget()
-
-                    if target ~= nil then
-                        print("Target: " .. target:get_full_name())
-                    end
-                end]]
-
-                --[[if weapon then
-                    local overlap = {}
-                    
-                    weapon:GetOverlappingActors(overlap, actor_c)
-        
-                    if overlap and #overlap > 0 then
-                        for i, actor in ipairs(overlap) do
-                            print(tostring(i) .. ": " .. actor:get_full_name())
-                        end
-                    end
-                end]]
-
+            if weapon and last_anim_notify_melee_obj then
                 local is_playing_melee_attack = anim_instance["Is Playing Melee Attack"](anim_instance, {}, {}, {}, {}, {})
 
                 if is_playing_melee_attack then
-                    anim_instance:SetRootMotionMode(0)
-                    local root_socket = mesh:GetSocketLocation(root_fname)
+                    anim_instance:SetRootMotionMode(1) -- IgnoreRootMotion
+                    --[[local root_socket = mesh:GetSocketLocation(root_fname)
                     --local root_rot = mesh:GetSocketRotation(root_fname)
                     local mesh_location = mesh:K2_GetComponentLocation()
                     local delta_mesh = (mesh_location - root_socket)
                     delta_mesh.Z = 0.0
-                    local final_location = pawn:K2_GetActorLocation() + delta_mesh
+                    --local final_location = pawn:K2_GetActorLocation() + delta_mesh
+                    local final_location = pawn.RootComponent:K2_GetComponentLocation()
                     final_location.Z = mesh_location.Z
-                    mesh:K2_SetWorldLocation(final_location, false, reusable_hit_result, false)
-
-                    -- IDK
-                    --[[local root_q = kismet_math_library:Quat_MakeFromEuler(root_rot)
-                    local mesh_q = kismet_math_library:Quat_MakeFromEuler(mesh:K2_GetComponentRotation())
-                    local delta_q = kismet_math_library:Multiply_QuatQuat(mesh_q, kismet_math_library:Quat_Inversed(root_q))
-                    local pawn_q = kismet_math_library:Quat_MakeFromEuler(pawn:K2_GetActorRotation())
-                    local q_rot = kismet_math_library:Quat_Rotator(kismet_math_library:Multiply_QuatQuat(pawn_q, delta_q))
-                    mesh:K2_SetWorldRotation(q_rot, false, reusable_hit_result, false)]]
+                    mesh:K2_SetWorldLocation(final_location, false, reusable_hit_result, false)]]
                 else -- Enable root motion outside of melee attacks.
-                    local mesh_location = mesh:K2_GetComponentLocation()
-                    local final_location = pawn:K2_GetActorLocation()
+                    --[[local mesh_location = mesh:K2_GetComponentLocation()
+                    --local final_location = pawn:K2_GetActorLocation()
+                    local final_location = pawn.RootComponent:K2_GetComponentLocation()
                     final_location.Z = mesh_location.Z
-                    mesh:K2_SetWorldLocation(final_location, false, reusable_hit_result, false)
-                    anim_instance:SetRootMotionMode(2)
+                    mesh:K2_SetWorldLocation(final_location, false, reusable_hit_result, false)]]
+                    anim_instance:SetRootMotionMode(2) -- RootMotionFromMontagesOnly
                 end
 
                 local combat_anim_subcomp = animation:FindSubcomponentByClass(SHAnimCombatSubcomp_c)
@@ -481,7 +468,12 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine_voidptr, delta)
                 end
 
                 melee_data.accumulated_time = melee_data.accumulated_time + delta
-                if melee_data.accumulated_time > 0.5 and (velocity:length() >= 2.5) then
+                if melee_data.cooldown_time > 0.0 then
+                    melee_data.cooldown_time = melee_data.cooldown_time - delta
+                end
+                local vel_len = velocity:length()
+                local swinging_fast = vel_len >= 2.5
+                if melee_data.cooldown_time <= 0.0 and (swinging_fast or math.abs(melee_data.accumulated_time - melee_data.last_tried_melee_time) < 0.1) then
                     --anim_instance:Montage_Play(melee_montage, 1.0, 0, 0.3, false, {})
                     --anim_instance:PlaySlotAnimationAsDynamicMontage(melee_montage, melee_attack_name, 0.0, 0.0, 1.0, 1, 0.0, 0.0)
                     if combat_anim_subcomp then
@@ -489,6 +481,10 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine_voidptr, delta)
                         if attack then
                             if last_anim_notify_melee_obj then
                                 -- Setting these allows the AnimNotify to actually hit stuff
+                                if swinging_fast then
+                                    melee_data.last_tried_melee_time = melee_data.accumulated_time
+                                end
+
                                 attack.CurrentMontage = melee_montage
                                 attack.InputData = melee_montage
 
@@ -518,6 +514,12 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine_voidptr, delta)
 
                                 if not triggered_melee_recently then
                                     vr.trigger_haptic_vibration(0, 0.1, 0.1, 0.1, vr.get_right_joystick_source()) -- Very light vibration
+
+                                    local current_montage = anim_instance:GetCurrentActiveMontage()
+
+                                    if current_montage then
+                                        anim_instance:Montage_Stop(0.0, current_montage)
+                                    end
                                 end
                             end
                         end
@@ -958,6 +960,8 @@ local function on_level_changed(new_level)
     crosshair_actor = nil
     left_hand_actor = nil
     right_hand_actor = nil
+    left_hand_component = nil
+    right_hand_component = nil
 end
 
 uevr.sdk.callbacks.on_pre_engine_tick(function(engine_voidptr, delta)
@@ -1312,13 +1316,13 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
                 end
 
                 local weapon_name = equipped_weapon:get_fname():to_string()
+                local fire_point = equipped_weapon.FirePoint
 
                 -- Crosshair widget
-                if crosshair_actor then
+                if crosshair_actor and fire_point ~= nil then
                     local ignore_actors = {my_pawn, equipped_weapon, crosshair_actor}
 
                     local root = equipped_weapon.RootComponent
-                    local fire_point = equipped_weapon.FirePoint
                     local weapon_pos = fire_point:K2_GetComponentLocation()
                     local forward_vector = root:GetForwardVector()
 
@@ -1328,7 +1332,7 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
                     end
 
                     local end_pos = weapon_pos + (forward_vector * 8192.0)
-                    local hit = kismet_system_library:LineTraceSingle(world, weapon_pos, end_pos, 15, true, ignore_actors, 0, reusable_hit_result, true, zero_color, zero_color, 1.0)
+                    local hit = kismet_system_library:LineTraceSingle(world, weapon_pos, end_pos, 3, true, ignore_actors, 0, reusable_hit_result, true, zero_color, zero_color, 1.0)
                     local hit_location = nil
 
                     if hit then
