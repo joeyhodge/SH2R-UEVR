@@ -303,6 +303,24 @@ bool SHPlugin::on_melee_trace_check_internal(API::UObject* melee_item, float a2,
                             if (!component->is_a(mesh_component_c)) {
                                 continue; // We only want to hit mesh components
                             }
+
+                            auto& bone_name = hit_result.BoneName;
+
+                            if (bone_name.number >= 0 || bone_name.comparison_index >= 0) {
+                                // Apply impulse to the bone
+                                struct {
+                                    glm::f64vec3 impulse{};
+                                    glm::f64vec3 location{};
+                                    API::FName bone_name{};
+                                } impulse_params;
+
+                                //impulse_params.impulse = glm::f64vec3{0.0, 0.0, 1000.0};
+                                impulse_params.impulse = hit_result.ImpactNormal * -1000.0;
+                                impulse_params.location = hit_result.ImpactPoint;
+                                impulse_params.bone_name = bone_name;
+
+                                component->call_function(L"AddImpulseAtLocation", &impulse_params);
+                            }
                         }
                     }
                 }
