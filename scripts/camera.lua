@@ -1079,6 +1079,7 @@ local last_head_z = nil
 local is_using_two_handed_weapon = false
 local is_using_melee_weapon = false
 local should_attach_flashlight = true
+local last_vr_enable_value = true
 
 local item_flip_map = {}
 
@@ -1093,7 +1094,7 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
         last_camera_y = position.y
         last_head_z = position.z -- So we dont get weird lerping from across the map when we re-enable VR mode
 
-        if last_roomscale_value == true then
+        if last_roomscale_value == true or last_vr_enable_value == true then
             if my_pawn ~= nil then
                 detach_flashlight(my_pawn)
             end
@@ -1105,8 +1106,6 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
                 vr.set_mod_value("VR_DecoupledPitch", "false")
             end
 
-            last_roomscale_value = false
-
             --if mesh and should_display_mesh() then
             if my_pawn and mesh then
                 mesh:SetRenderInMainPass(true)
@@ -1115,8 +1114,13 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
             end
         end
 
+        last_roomscale_value = false
+        last_vr_enable_value = false
+
         return
     end
+
+    last_vr_enable_value = true
 
     if not mesh then
         return
