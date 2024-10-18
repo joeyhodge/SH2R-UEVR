@@ -43,6 +43,9 @@ local hitresult_c = find_required_object("ScriptStruct /Script/Engine.HitResult"
 local empty_hitresult = StructObject.new(hitresult_c)
 local reusable_hit_result = StructObject.new(hitresult_c)
 
+local temp_vec3 = Vector3d.new(0, 0, 0)
+local temp_vec3f = Vector3f.new(0, 0, 0)
+
 local function find_camera_component()
     local components = SHCharacterPlayCameraComponent_c:get_objects_matching(false)
     if components == nil or #components == 0 then
@@ -186,8 +189,8 @@ local function attach_flashlight(pawn, should_detach)
         local mesh_state = UEVR_UObjectHook.get_or_add_motion_controller_state(mesh)
         mesh_state:set_hand(0) -- Left hand
         mesh_state:set_permanent(false)
-        mesh_state:set_rotation_offset(Vector3f.new(0.175, -1.665, -0.007))
-        mesh_state:set_location_offset(Vector3f.new(2.376, 5.972, 0.9))
+        mesh_state:set_rotation_offset(temp_vec3f:set(0.175, -1.665, -0.007))
+        mesh_state:set_location_offset(temp_vec3f:set(2.376, 5.972, 0.9))
     end
 
     local light = flashlight.LightMain
@@ -198,7 +201,7 @@ local function attach_flashlight(pawn, should_detach)
     else
         local light_state = UEVR_UObjectHook.get_or_add_motion_controller_state(light)
         light_state:set_hand(0) -- Left hand
-        light_state:set_rotation_offset(Vector3f.new(0.0, -0.130, 0.0))
+        light_state:set_rotation_offset(temp_vec3f:set(0.0, -0.130, 0.0))
         light_state:set_permanent(false)
     end
 
@@ -211,8 +214,8 @@ local function attach_flashlight(pawn, should_detach)
         local light_shaft_state = UEVR_UObjectHook.get_or_add_motion_controller_state(light_shaft)
         light_shaft_state:set_hand(0) -- Left hand
         light_shaft_state:set_permanent(false)
-        light_shaft_state:set_rotation_offset(Vector3f.new(1.527, -1.723, -1.647))
-        light_shaft_state:set_location_offset(Vector3f.new(-2.066, -6.140, -5.218))
+        light_shaft_state:set_rotation_offset(temp_vec3f:set(1.527, -1.723, -1.647))
+        light_shaft_state:set_location_offset(temp_vec3f:set(-2.066, -6.140, -5.218))
     end
 end
 
@@ -346,7 +349,7 @@ uevr.sdk.callbacks.on_lua_event(function(event_name, event_string)
     end
 end)
 
-uevr.sdk.callbacks.on_pre_engine_tick(function(engine_voidptr, delta)
+uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
     if not right_hand_component or not left_hand_component then
         return
     end
@@ -354,9 +357,10 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine_voidptr, delta)
     vr.get_pose(vr.get_right_controller_index(), melee_data.right_hand_pos_raw, melee_data.right_hand_q_raw)
 
     -- Copy without creating new userdata
-    melee_data.right_hand_pos.x = melee_data.right_hand_pos_raw.x
+    --[[melee_data.right_hand_pos.x = melee_data.right_hand_pos_raw.x
     melee_data.right_hand_pos.y = melee_data.right_hand_pos_raw.y
-    melee_data.right_hand_pos.z = melee_data.right_hand_pos_raw.z
+    melee_data.right_hand_pos.z = melee_data.right_hand_pos_raw.z]]
+    melee_data.right_hand_pos:set(melee_data.right_hand_pos_raw.x, melee_data.right_hand_pos_raw.y, melee_data.right_hand_pos_raw.z)
 
     local velocity = (melee_data.right_hand_pos - melee_data.last_right_hand_raw_pos) * (1 / delta)
 
@@ -533,7 +537,7 @@ end)
 local function spawn_actor(world_context, actor_class, location, collision_method, owner)
     temp_transform.Translation = location
     temp_transform.Rotation.W = 1.0
-    temp_transform.Scale3D = Vector3d.new(1.0, 1.0, 1.0)
+    temp_transform.Scale3D = temp_vec3:set(1.0, 1.0, 1.0)
 
     local actor = Statics:BeginDeferredActorSpawnFromClass(world_context, actor_class, temp_transform, collision_method, owner)
 
@@ -566,9 +570,7 @@ local function reset_crosshair_actor_if_deleted()
     end
 end
 
-local function setup_crosshair_actor(pawn, crosshair_widget)
-    local game_engine = UEVR_UObjectHook.get_first_object_by_class(game_engine_class)
-
+local function setup_crosshair_actor(game_engine, pawn, crosshair_widget)
     local viewport = game_engine.GameViewport
     if viewport == nil then
         print("Viewport is nil")
@@ -595,7 +597,7 @@ local function setup_crosshair_actor(pawn, crosshair_widget)
 
     temp_transform.Translation = pos
     temp_transform.Rotation.W = 1.0
-    temp_transform.Scale3D = Vector3d.new(1.0, 1.0, 1.0)
+    temp_transform.Scale3D = temp_vec3:set(1.0, 1.0, 1.0)
     local widget_component = crosshair_actor:AddComponentByClass(widget_component_c, false, temp_transform, false)
 
     if widget_component == nil then
@@ -964,12 +966,7 @@ local function on_level_changed(new_level)
     right_hand_component = nil
 end
 
-uevr.sdk.callbacks.on_pre_engine_tick(function(engine_voidptr, delta)
-    local engine = game_engine_class:get_first_object_matching(false)
-    if not engine then
-        return
-    end
-
+uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
     local viewport = engine.GameViewport
 
     if viewport then
@@ -1034,7 +1031,7 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine_voidptr, delta)
     end
 
     if crosshair_actor == nil or last_crosshair_widget ~= crosshair_widget then
-        setup_crosshair_actor(pawn, crosshair_widget)
+        setup_crosshair_actor(engine, pawn, crosshair_widget)
     end
 
     last_crosshair_widget = crosshair_widget
@@ -1152,7 +1149,7 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
             local rotation_q = kismet_math_library:Conv_RotatorToQuaternion(rotation)
 
             local tilt_angle = 45
-            local tilt_q = kismet_math_library:Quat_MakeFromEuler(Vector3d.new(tilt_angle, 0, 0))
+            local tilt_q = kismet_math_library:Quat_MakeFromEuler(temp_vec3:set(tilt_angle, 0, 0))
             rotation_q = kismet_math_library:Multiply_QuatQuat(rotation_q, tilt_q)
             rotation = kismet_math_library:Quat_Rotator(rotation_q)
 
@@ -1214,7 +1211,7 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
                 end
             end
 
-            local tilt_q = kismet_math_library:Quat_MakeFromEuler(Vector3d.new(0, flip_angle, tilt_angle))
+            local tilt_q = kismet_math_library:Quat_MakeFromEuler(temp_vec3:set(0, flip_angle, tilt_angle))
             rotation_q = kismet_math_library:Multiply_QuatQuat(rotation_q, tilt_q)
             right_hand_rot = kismet_math_library:Quat_Rotator(rotation_q)
             investigating_item:K2_SetActorLocation(right_hand_pos, false, empty_hitresult, false)
@@ -1242,7 +1239,7 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
     
     local head_rot = mesh:GetSocketRotation(head_fname)
     forward = kismet_math_library:Conv_RotatorToVector(head_rot)
-    forward = kismet_math_library:RotateAngleAxis(forward, 90, Vector3d.new(0, 0, 1))
+    forward = kismet_math_library:RotateAngleAxis(forward, 90, temp_vec3:set(0, 0, 1))
 
     --pawn_pos = my_pawn:K2_GetActorLocation()
     --pawn_pos = mesh:K2_GetComponentLocation()
@@ -1297,8 +1294,8 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
         end
 
         -- This is the real game render rotation before any VR modifications
-        last_rot = Vector3d.new(rotation.x, rotation.y, rotation.z)
-        last_pos = Vector3d.new(position.x, position.y, position.z)
+        last_rot:set(rotation.x, rotation.y, rotation.z)
+        last_pos:set(position.x, position.y, position.z)
 
         -- This is where we attach the weapons to the motion controllers
         if anim_instance then
@@ -1348,7 +1345,7 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
                     local delta = weapon_pos - hit_location
                     local len = math.max(0.1, delta:length() * 0.001)
                     
-                    crosshair_actor:SetActorScale3D(Vector3d.new(len, len, len))
+                    crosshair_actor:SetActorScale3D(temp_vec3:set(len, len, len))
 
                     local rot = kismet_math_library:Conv_VectorToRotator(forward_vector)
                     rot.Yaw = rot.Yaw + 180
@@ -1371,25 +1368,25 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
                         local name = equipped_weapon:get_fname():to_string()
 
                         if name:find("Pistol") then
-                            state:set_rotation_offset(Vector3f.new(0.149, 0.084, 0.077))
-                            state:set_location_offset(Vector3f.new(-2.982, -10.160, 4.038))
+                            state:set_rotation_offset(temp_vec3f:set(0.149, 0.084, 0.077))
+                            state:set_location_offset(temp_vec3f:set(-2.982, -10.160, 4.038))
                             is_using_two_handed_weapon = false
                         elseif name:find("Shotgun") then
-                            state:set_rotation_offset(Vector3f.new(0.037, 1.556, -0.022)) -- Euler (radians)
-                            state:set_location_offset(Vector3f.new(-7.967, -5.752, -0.255))
+                            state:set_rotation_offset(temp_vec3f:set(0.037, 1.556, -0.022)) -- Euler (radians)
+                            state:set_location_offset(temp_vec3f:set(-7.967, -5.752, -0.255))
                             is_using_two_handed_weapon = true
                         elseif name:find("Rifle") then
-                            state:set_rotation_offset(Vector3f.new(0.037, 1.556, -0.022)) -- Euler (radians)
-                            state:set_location_offset(Vector3f.new(-30.942, -6.758, 0.017))
+                            state:set_rotation_offset(temp_vec3f:set(0.037, 1.556, -0.022)) -- Euler (radians)
+                            state:set_location_offset(temp_vec3f:set(-30.942, -6.758, 0.017))
                             is_using_two_handed_weapon = true
                         --elseif name:find("IronPipe") then
                         elseif is_using_melee_weapon then
                             if name:find("Chainsaw") then
-                                state:set_rotation_offset(Vector3f.new(-0.737, -0.090, 0.096))
-                                state:set_location_offset(Vector3f.new(0.257, 2.007, 31.583))
+                                state:set_rotation_offset(temp_vec3f:set(-0.737, -0.090, 0.096))
+                                state:set_location_offset(temp_vec3f:set(0.257, 2.007, 31.583))
                             else
-                                state:set_rotation_offset(Vector3f.new(0.495, 1.928, 0.004)) -- Euler (radians)
-                                state:set_location_offset(Vector3f.new(-1.444, 30.221, -0.914))
+                                state:set_rotation_offset(temp_vec3f:set(0.495, 1.928, 0.004)) -- Euler (radians)
+                                state:set_location_offset(temp_vec3f:set(-1.444, 30.221, -0.914))
                             end
                             is_using_two_handed_weapon = true -- It's two handed but it's a melee weapon
                         else
@@ -1422,7 +1419,7 @@ uevr.sdk.callbacks.on_post_calculate_stereo_view_offset(function(device, view_in
 
         -- Reset the delta if it's too large
         if hmd_delta:length() > MAX_LERP_DIST then
-            hmd_delta = Vector3d.new(0, 0, 0)
+            hmd_delta:set(0, 0, 0)
         end
 
         last_camera_x = last_camera_x + hmd_delta.X
