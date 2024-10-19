@@ -184,6 +184,44 @@ bool SHPlugin::on_melee_trace_check_internal(API::UObject* melee_item, float a2,
     static_assert(sizeof(BoxSphereBounds) == 0x38, "BoxSphereBounds size mismatch");
 
     if (mesh_component != nullptr) {
+        // Enable physics
+        struct {
+            bool new_physics{true};
+        } simulate_physics_params;
+        //mesh_component->call_function(L"SetSimulatePhysics", &simulate_physics_params);
+        //mesh_component->call_function(L"SetAllBodiesSimulatePhysics", &simulate_physics_params);
+
+        struct {
+            uint8_t collision_object_type{5}; // ECC_PhysicsBody
+        } set_collision_object_type_params;
+
+        mesh_component->call_function(L"SetCollisionObjectType", &set_collision_object_type_params);
+
+        struct {
+            uint8_t new_collision_enabled{3};
+        } new_collision_enabled;
+
+        mesh_component->call_function(L"SetCollisionEnabled", &new_collision_enabled);
+
+        struct {
+            uint8_t new_response_to_all_channels{0}; // ECR_Ignore
+        } new_response_to_all_channels;
+
+        mesh_component->call_function(L"SetCollisionResponseToAllChannels", &new_response_to_all_channels);
+
+        struct {
+            uint8_t channel{5}; // ECC_PhysicsBody
+            uint8_t new_response{2}; // ECR_Block
+        } new_response{};
+
+        mesh_component->call_function(L"SetCollisionResponseToChannel", &new_response);
+
+        struct {
+            bool generate_overlap_events{true};
+        } generate_overlap_events;
+
+        //mesh_component->call_function(L"SetGenerateOverlapEvents", &generate_overlap_events);
+
         mesh_component->call_function(L"K2_GetComponentToWorld", &mesh_transform);
 
         auto skeletal_mesh = mesh_component->get_property<API::UObject*>(L"SkeletalMesh");
@@ -316,7 +354,10 @@ bool SHPlugin::on_melee_trace_check_internal(API::UObject* melee_item, float a2,
                             static const auto skeletal_mesh_component_c = API::get()->find_uobject<API::UClass>(L"Class /Script/Engine.SkeletalMeshComponent");
                             static const auto breakable_glass_component_c = API::get()->find_uobject<API::UClass>(L"Class /Script/SHProto.SHBreakableGlassComponent");
 
+                            bool is_enemy = false;
+
                             if (component->is_a(skeletal_mesh_component_c)) {
+                                is_enemy = true;
                                 any_enemy = true;
                             } else if (component->is_a(breakable_glass_component_c)) {
                                 any_glass = true;
@@ -325,7 +366,103 @@ bool SHPlugin::on_melee_trace_check_internal(API::UObject* melee_item, float a2,
                             auto& bone_name = hit_result.BoneName;
 
                             if (bone_name.number >= 0 || bone_name.comparison_index >= 0) {
-                                // Apply impulse to the bone
+                                printf("Hit bone: %s\n", utility::narrow(bone_name.to_string()).c_str());
+                                const auto is_pelvis = bone_name.to_string().find(L"pelvis") != std::wstring::npos;
+                                if (is_enemy && !is_pelvis) {
+                                    struct {
+                                        bool new_physics{false};
+                                    } physics_blend_params;
+
+                                    component->call_function(L"SetSimulatePhysics", &physics_blend_params);
+
+                                    //physics_blend_params.new_physics  = true;
+                                    //component->call_function(L"SetEnablePhysicsBlending", &physics_blend_params);
+
+                                    //physics_blend_params.new_physics = false;
+                                    //component->call_function(L"SetAllBodiesSimulatePhysics", &physics_blend_params);
+
+                                    struct {
+                                        API::FName bone_name{};
+                                        bool new_simulation{true};
+                                        bool include_self{true};
+                                    } set_all_bodies_below_simulate;
+
+                                    set_all_bodies_below_simulate.bone_name = bone_name;
+
+                                    component->call_function(L"SetAllBodiesBelowSimulatePhysics", &set_all_bodies_below_simulate);
+
+                                    struct {
+                                        API::FName bone_name{};
+                                        float physics_blend_weight{1.0f};
+                                        bool skip{false};
+                                        bool include_self{true};
+                                    } set_all_bodies_below_physics_blend_weight;
+
+                                    set_all_bodies_below_physics_blend_weight.bone_name = bone_name;
+
+                                    component->call_function(L"SetAllBodiesBelowPhysicsBlendWeight", &set_all_bodies_below_physics_blend_weight);
+
+                                    /*struct {
+                                        float physics_blend_weight{1.0f};
+                                    } set_physics_blend_weight;
+                                    mesh_component->call_function(L"SetPhysicsBlendWeight", &set_physics_blend_weight);
+
+                                    mesh_component->call_function(L"SetEnablePhysicsBlending", &physics_blend_params);*/
+                                }
+
+                                // get owner
+                                struct {
+                                    API::UObject* value{nullptr};
+                                } owner;
+                                component->call_function(L"GetOwner", &owner);
+
+                                if (owner.value != nullptr && !is_pelvis) {
+                                    // Look for physical animation component
+                                    auto physical_animation_component_ptr = (API::UObject**)owner.value->get_property_data(L"PhysicalAnimation");
+                                    auto physical_animation_component = physical_animation_component_ptr != nullptr ? *physical_animation_component_ptr : nullptr;
+
+                                    if (physical_animation_component != nullptr && is_enemy) {
+                                        struct {
+                                            bool active{true};
+                                        } active_params;
+
+                                        physical_animation_component->call_function(L"Activate", &active_params);
+
+                                        struct PhysicalAnimationData {
+                                            API::FName BodyName; // 0x0
+                                            uint8_t bIsLocalSimulation : 1; // 0x8
+                                            uint8_t pad_bitfield_8_1 : 7;
+                                            char pad_9[0x3];
+                                            float OrientationStrength; // 0xc
+                                            float AngularVelocityStrength; // 0x10
+                                            float PositionStrength; // 0x14
+                                            float VelocityStrength; // 0x18
+                                            float MaxLinearForce; // 0x1c
+                                            float MaxAngularForce; // 0x20
+                                        };
+
+                                        // Apply settings to bodies below the bone
+                                        struct {
+                                            API::FName body_name{};
+                                            PhysicalAnimationData data{};
+                                            bool include_self{true};
+                                        } physical_animation_params;
+
+                                        physical_animation_params.body_name = bone_name;
+                                        physical_animation_params.data.BodyName = bone_name;
+                                        physical_animation_params.data.bIsLocalSimulation = false;
+                                        physical_animation_params.data.OrientationStrength = 100.0f;
+                                        physical_animation_params.data.AngularVelocityStrength = 100.0f;
+                                        physical_animation_params.data.PositionStrength = 100.0f;
+                                        physical_animation_params.data.VelocityStrength = 100.0f;
+                                        physical_animation_params.data.MaxLinearForce = 0.0f;
+                                        physical_animation_params.data.MaxAngularForce = 0.0f;
+
+                                        physical_animation_component->call_function(L"ApplyPhysicalAnimationSettingsBelow", &physical_animation_params);
+                                        //printf("Applied physical animation settings to %s\n", utility::narrow(bone_name.to_string()).c_str());
+                                    }
+                                }
+                                
                                 struct {
                                     glm::f64vec3 impulse{};
                                     glm::f64vec3 location{};
@@ -333,7 +470,7 @@ bool SHPlugin::on_melee_trace_check_internal(API::UObject* melee_item, float a2,
                                 } impulse_params;
 
                                 //impulse_params.impulse = glm::f64vec3{0.0, 0.0, 1000.0};
-                                impulse_params.impulse = hit_result.ImpactNormal * -5000.0;
+                                impulse_params.impulse = hit_result.ImpactNormal * -100000.0;
                                 impulse_params.location = hit_result.ImpactPoint;
                                 impulse_params.bone_name = bone_name;
 
