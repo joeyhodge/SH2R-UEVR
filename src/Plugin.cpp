@@ -128,14 +128,14 @@ bool SHPlugin::on_melee_trace_check_internal(API::UObject* melee_item, float a2,
     static const auto kismet_system_library_c = API::get()->find_uobject<API::UClass>(L"Class /Script/Engine.KismetSystemLibrary");
     static const auto kismet_system_library = kismet_system_library_c->get_class_default_object();
 
-    static auto kismet_math_library_c = API::get()->find_uobject<API::UClass>(L"Class /Script/Engine.KismetMathLibrary");
-    static auto kismet_math_library = kismet_math_library_c->get_class_default_object();
+    static const auto kismet_math_library_c = API::get()->find_uobject<API::UClass>(L"Class /Script/Engine.KismetMathLibrary");
+    static const auto kismet_math_library = kismet_math_library_c->get_class_default_object();
 
-    static auto SHMeleeBaseDamage_c = API::get()->find_uobject<API::UClass>(L"Class /Script/SHProto.SHMeleeBaseDamage");
-    static auto SHMeleeBaseDamage = SHMeleeBaseDamage_c != nullptr ? SHMeleeBaseDamage_c->get_class_default_object() : nullptr;
+    static const auto SHMeleeBaseDamage_c = API::get()->find_uobject<API::UClass>(L"Class /Script/SHProto.SHMeleeBaseDamage");
+    static const auto SHMeleeBaseDamage = SHMeleeBaseDamage_c != nullptr ? SHMeleeBaseDamage_c->get_class_default_object() : nullptr;
 
     if (SHMeleeBaseDamage != nullptr) {
-        SHMeleeBaseDamage->set_bool_property(L"bIsGroundHit", true); // Allows us to hit enemies on the ground.
+        SHMeleeBaseDamage->set_bool_property(L"bIsGroundHit", true); // Allows us to hit enemies on the ground. I don't even know why this is a thing.
     }
 
     struct {
@@ -470,7 +470,7 @@ bool SHPlugin::on_melee_trace_check_internal(API::UObject* melee_item, float a2,
                                 } impulse_params;
 
                                 //impulse_params.impulse = glm::f64vec3{0.0, 0.0, 1000.0};
-                                impulse_params.impulse = hit_result.ImpactNormal * -100000.0;
+                                impulse_params.impulse = hit_result.ImpactNormal * -50000.0;
                                 impulse_params.location = hit_result.ImpactPoint;
                                 impulse_params.bone_name = bone_name;
 
