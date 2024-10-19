@@ -131,6 +131,13 @@ bool SHPlugin::on_melee_trace_check_internal(API::UObject* melee_item, float a2,
     static auto kismet_math_library_c = API::get()->find_uobject<API::UClass>(L"Class /Script/Engine.KismetMathLibrary");
     static auto kismet_math_library = kismet_math_library_c->get_class_default_object();
 
+    static auto SHMeleeBaseDamage_c = API::get()->find_uobject<API::UClass>(L"Class /Script/SHProto.SHMeleeBaseDamage");
+    static auto SHMeleeBaseDamage = SHMeleeBaseDamage_c != nullptr ? SHMeleeBaseDamage_c->get_class_default_object() : nullptr;
+
+    if (SHMeleeBaseDamage != nullptr) {
+        SHMeleeBaseDamage->set_bool_property(L"bIsGroundHit", true); // Allows us to hit enemies on the ground.
+    }
+
     struct {
         API::UObject* world_context_object{};
         glm::f64vec3 start{};
