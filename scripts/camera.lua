@@ -235,6 +235,8 @@ local kismet_system_library = find_static_class("Class /Script/Engine.KismetSyst
 
 local head_fname = kismet_string_library:Conv_StringToName("Face")
 local root_fname = kismet_string_library:Conv_StringToName("root")
+local miss_fname = kismet_string_library:Conv_StringToName("Miss")
+local hit_enemy_fname = kismet_string_library:Conv_StringToName("HitEnemy")
 local muzzle_fx_fname = kismet_string_library:Conv_StringToName("FX_muzzle")
 
 
@@ -324,6 +326,7 @@ local melee_data = {
     right_hand_q_raw = UEVR_Quaternionf.new(),
     right_hand_pos = Vector3f.new(0, 0, 0),
     last_right_hand_raw_pos = Vector3f.new(0, 0, 0),
+    last_time_messed_with_attack_request = 0.0
 }
 
 uevr.sdk.callbacks.on_lua_event(function(event_name, event_string)
@@ -368,6 +371,7 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
     melee_data.last_right_hand_raw_pos.x = melee_data.right_hand_pos_raw.x
     melee_data.last_right_hand_raw_pos.y = melee_data.right_hand_pos_raw.y
     melee_data.last_right_hand_raw_pos.z = melee_data.right_hand_pos_raw.z
+    melee_data.last_time_messed_with_attack_request = melee_data.last_time_messed_with_attack_request + delta
 
     local pawn = api:get_local_pawn(0)
 
@@ -405,6 +409,7 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
 
     if melee_montage then
         -- no way in hell we want to use root motion for melee attacks
+        melee_montage.bEnableRootMotionTranslation = false
         --[[melee_montage.bEnableRootMotionTranslation = false
         melee_montage.bEnableRootMotionRotation = false
         melee_montage.RootMotionRootLock = 0]]
@@ -435,33 +440,27 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
                     local final_location = pawn.RootComponent:K2_GetComponentLocation()
                     final_location.Z = mesh_location.Z
                     mesh:K2_SetWorldLocation(final_location, false, reusable_hit_result, false)]]
-                    anim_instance:SetRootMotionMode(2) -- RootMotionFromMontagesOnly
+                    anim_instance:SetRootMotionMode(3) -- RootMotionFromMontagesOnly
                 end
 
                 local combat_anim_subcomp = animation:FindSubcomponentByClass(SHAnimCombatSubcomp_c)
 
                 -- Stops normal melee attacks (aka pressing attack button)
                 -- We only want attacks to work if we swing the controller
-                if not triggered_melee_recently and combat_anim_subcomp and vr.is_using_controllers() then
+                if melee_data.last_time_messed_with_attack_request >= 0.1 and not triggered_melee_recently and combat_anim_subcomp and vr.is_using_controllers() then
                     local attack = combat_anim_subcomp.Attack
                     if attack then
                         local animdata = attack.PlayAnimationData
 
                         if animdata then
-                            if animdata.UseRootMotion then
-                                local current_montage = attack.CurrentMontage
-                                animdata.UseRootMotion = false
+                            local current_montage = attack.CurrentMontage
 
-                                if current_montage then
-                                    animdata.SlotName = melee_attack_name
-                                    animdata.BlendInTime = 0.0
-                                    animdata.BlendOutTime = 0.0
-                                    attack:StopRequest(0.0)
-                                    --attack:PlayRequest(animdata, Vector3d.new(0, 0, 0))
-                                    --attack:OverwriteRequest(0.0, animdata, Vector3d.new(0, 0, 0))
-                                end
-                            else
-                                attack.CurrentMontage = melee_montage
+                            if current_montage and attack:IsPlaying() then
+                                animdata.BlendInTime = 0.0
+                                animdata.BlendOutTime = 0.0
+                                anim_instance:Montage_SetPosition(current_montage, current_montage:GetPlayLength())
+
+                                melee_data.last_time_messed_with_attack_request = 0.0
                             end
                         end
                     end
@@ -478,51 +477,33 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
                 local vel_len = velocity:length()
                 local swinging_fast = vel_len >= 2.5
                 if melee_data.cooldown_time <= 0.0 and (swinging_fast or math.abs(melee_data.accumulated_time - melee_data.last_tried_melee_time) < 0.1) then
-                    --anim_instance:Montage_Play(melee_montage, 1.0, 0, 0.3, false, {})
-                    --anim_instance:PlaySlotAnimationAsDynamicMontage(melee_montage, melee_attack_name, 0.0, 0.0, 1.0, 1, 0.0, 0.0)
                     if combat_anim_subcomp then
                         local attack = combat_anim_subcomp.Attack
-                        if attack then
+                        if attack and attack.CurrentMontage == nil and attack.InputData == nil then
                             if last_anim_notify_melee_obj then
-                                -- Setting these allows the AnimNotify to actually hit stuff
                                 if swinging_fast then
                                     melee_data.last_tried_melee_time = melee_data.accumulated_time
                                 end
 
+                                -- Setting these allows the AnimNotify to actually hit stuff
                                 attack.CurrentMontage = melee_montage
                                 attack.InputData = melee_montage
-
-                                --last_anim_notify_modify_combat_input_obj.RequiredInputMode = 10
-                                --last_anim_notify_modify_combat_input_obj:DANGEROUS_call_member_virtual(ANIMNOTIFY_NOTIFY_VTABLE_INDEX, mesh, melee_montage)
 
                                 -- Triggers Notify function, which does the melee attack traces and damage
                                 last_anim_notify_melee_obj:DANGEROUS_call_member_virtual(ANIMNOTIFY_NOTIFY_VTABLE_INDEX, mesh, melee_montage)
 
-                                --[[if not triggered_melee_recently then
-                                    local equipped_weapon = anim_instance:GetEquippedWeapon()
-
-                                    if equipped_weapon then
-                                        -- Nudge the weapon slightly and try again
-                                        local root = equipped_weapon.RootComponent
-                                        local root_pos = equipped_weapon:K2_GetActorLocation()
-                                        local up_vector = root:GetUpVector()
-
-                                        equipped_weapon:K2_SetActorLocation(root_pos + (up_vector * 100.0), false, reusable_hit_result, false)
-
-                                        -- Try again
-                                        last_anim_notify_melee_obj:DANGEROUS_call_member_virtual(ANIMNOTIFY_NOTIFY_VTABLE_INDEX, mesh, melee_montage)
-
-                                        equipped_weapon:K2_SetActorLocation(root_pos, false, reusable_hit_result, false)
-                                    end
-                                end]]
+                                -- Reset the attack request back so we don't break something
+                                attack.CurrentMontage = nil
+                                attack.InputData = nil
 
                                 if not triggered_melee_recently then
                                     vr.trigger_haptic_vibration(0, 0.1, 0.1, 0.1, vr.get_right_joystick_source()) -- Very light vibration
 
                                     local current_montage = anim_instance:GetCurrentActiveMontage()
 
-                                    if current_montage then
-                                        anim_instance:Montage_Stop(0.0, current_montage)
+                                    if current_montage == melee_montage then
+                                        --anim_instance:Montage_Stop(0.0, current_montage)
+                                        anim_instance:Montage_SetPosition(current_montage, current_montage:GetPlayLength())
                                     end
                                 end
                             end
