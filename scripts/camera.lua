@@ -1227,7 +1227,7 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
     --pawn_pos = mesh:GetSocketLocation(root_fname)
     pawn_pos = my_pawn.RootComponent:K2_GetComponentLocation()
     head_pos = mesh:GetSocketLocation(head_fname)
-    head_pos.Z = pawn_pos.Z + 60.0
+    head_pos.Z = pawn_pos.Z + 65.0
 
     if not last_head_z then
         last_head_z = head_pos.Z
