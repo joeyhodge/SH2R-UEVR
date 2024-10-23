@@ -285,12 +285,30 @@ if ReceivePlayShake ~= nil then
 end
 
 local AnimNotify_MeleeAttackCheck_c = find_required_object("Class /Script/SHProto.AnimNotify_MeleeAttackCheck")
+local AnimNotify_AttackHit_c = find_required_object("Class /Script/Being.AnimNotify_AttackHit")
 local AnimNotify_MeleeAttackCheck_Notify = AnimNotify_MeleeAttackCheck_c:find_function("Received_Notify")
 local AnimNotify_ModifyCombatInputMode_c = find_required_object("Class /Script/SHProto.AnimNotify_ModifyCombatInputMode")
+local AnimNotifyEventReference_c = find_required_object("ScriptStruct /Script/Engine.AnimNotifyEventReference")
+local SHHitReactionSubcomponent_c = find_required_object("Class /Script/SHProto.SHHitReactionSubcomponent")
+local SHMeleeBaseDamage_c = find_required_object("Class /Script/SHProto.SHMeleeBaseDamage")
+local DamageType_c = find_required_object("Class /Script/Engine.DamageType")
+local SHHitReactionResult_c = find_required_object("ScriptStruct /Script/SHProto.SHHitReactionResult")
+local SHHitReactionConfiguration_c = find_required_object("ScriptStruct /Script/SHProto.SHHitReactionConfiguration")
+local SHItemWeaponMelee_c = find_required_object("Class /Script/SHProto.SHItemWeaponMelee")
+local reusable_hit_configuration = StructObject.new(SHHitReactionConfiguration_c)
+local reusable_hit_reaction_result = StructObject.new(SHHitReactionResult_c)
+local reusable_anim_notify_ref = StructObject.new(AnimNotifyEventReference_c)
 local melee_montage = nil
-local ANIMNOTIFY_NOTIFY_VTABLE_INDEX = 89
+local ANIMNOTIFY_NOTIFY_VTABLE_INDEX = 88
+local MELEE_WEAPON_DAMAGE_TYPE_OFFSET = 0x6D8
 local last_anim_notify_melee_obj = nil
 local last_anim_notify_modify_combat_input_obj = nil
+
+local is_allowing_vr_mode = false
+local last_roomscale_value = false
+local forward = nil
+local last_delta = 1.0
+local last_level = nil
 
 if AnimNotify_MeleeAttackCheck_Notify then
     AnimNotify_MeleeAttackCheck_Notify:set_function_flags(AnimNotify_MeleeAttackCheck_Notify:get_function_flags() | 0x400) -- Mark as native
@@ -306,6 +324,8 @@ if AnimNotify_MeleeAttackCheck_Notify then
             print (" Animation: " .. animation:get_full_name())
 
             melee_montage = animation
+        elseif obj:is_a(AnimNotify_AttackHit_c) then
+            print("Attack hit! " .. obj:get_full_name())
         end
         return false
     end,
@@ -326,8 +346,52 @@ local melee_data = {
     right_hand_q_raw = UEVR_Quaternionf.new(),
     right_hand_pos = Vector3f.new(0, 0, 0),
     last_right_hand_raw_pos = Vector3f.new(0, 0, 0),
-    last_time_messed_with_attack_request = 0.0
+    last_time_messed_with_attack_request = 0.0,
+    root_motion_needs_reset = true,
+    known_damage_types = {},
+    damage_type_dict = {},
+    last_repopulate_attempt = 0.0,
+    first = true
 }
+
+local function populate_damage_types()
+    if #melee_data.known_damage_types > 0 then
+        return
+    end
+    
+    local damage_types = DamageType_c:get_objects_matching(true) -- Include defaults
+
+    for k, v in pairs(damage_types) do
+        --if v:as_struct() ~= nil then
+            print("Found damage type: " .. v:get_full_name())
+            local c = v:get_class()
+            table.insert(melee_data.known_damage_types, c)
+            melee_data.damage_type_dict[c:get_fname():to_string()] = c
+        --end
+    end
+
+    melee_data.last_repopulate_attempt = os.clock()
+end
+
+local function lookup_damage_type(name)
+    populate_damage_types()
+
+    local v = melee_data.damage_type_dict[name]
+
+    if v ~= nil and UEVR_UObjectHook.exists(v) and v:is_a(DamageType_c) then
+        return v
+    end
+
+    local now = os.clock()
+
+    if now - melee_data.last_repopulate_attempt > 1.0 then
+        melee_data.known_damage_types = {}
+        melee_data.damage_type_dict = {}
+        populate_damage_types()
+    end
+
+    return melee_data.damage_type_dict[name]
+end
 
 uevr.sdk.callbacks.on_lua_event(function(event_name, event_string)
     if event_name == "OnMeleeTraceSuccess" then
@@ -365,6 +429,11 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
     melee_data.right_hand_pos.z = melee_data.right_hand_pos_raw.z]]
     melee_data.right_hand_pos:set(melee_data.right_hand_pos_raw.x, melee_data.right_hand_pos_raw.y, melee_data.right_hand_pos_raw.z)
 
+    if first then
+        melee_data.last_right_hand_raw_pos:set(melee_data.right_hand_pos.x, melee_data.right_hand_pos.y, melee_data.right_hand_pos.z)
+        first = false
+    end
+
     local velocity = (melee_data.right_hand_pos - melee_data.last_right_hand_raw_pos) * (1 / delta)
 
     -- Clone without creating new userdata
@@ -379,11 +448,18 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
         return
     end
 
+    --[[local subcomps = SHHitReactionSubcomponent_c:get_objects_matching(false)
+
+    for i, v in ipairs(subcomps) do
+
+    end]]
+
     if melee_montage == nil or not UEVR_UObjectHook.exists(melee_montage) or not melee_montage:is_a(AnimMontage_c) then
         local montages = AnimMontage_c:get_objects_matching(false)
         
         for i, v in ipairs(montages) do
             if v:get_fname():to_string() == "James_SideAttacks_GroundAttack_UpDown" then
+            --if v:get_fname():to_string() == "James_StealthAttack_Hit1_v2" then
                 melee_montage = v
                 print("Found montage")
                 break
@@ -392,10 +468,21 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
     end
 
     if not last_anim_notify_melee_obj or not UEVR_UObjectHook.exists(last_anim_notify_melee_obj) or not last_anim_notify_melee_obj:is_a(AnimNotify_MeleeAttackCheck_c) then
-        last_anim_notify_melee_obj = AnimNotify_MeleeAttackCheck_c:get_class_default_object() -- Will this work? let's find out
+        --[[last_anim_notify_melee_obj = AnimNotify_MeleeAttackCheck_c:get_class_default_object() -- Will this work? let's find out
 
         if last_anim_notify_melee_obj then
             print("Got melee notify obj")
+        end]]
+
+        local anim_notifies = AnimNotify_MeleeAttackCheck_c:get_objects_matching(false)
+
+        for i, v in ipairs(anim_notifies) do
+            --if v:get_fname():to_string() == "James_SideAttacks_GroundAttack_UpDown" then
+            if v:get_outer() == melee_montage then
+                last_anim_notify_melee_obj = v
+                print("Found melee notify obj @ " .. v:get_full_name())
+                break
+            end
         end
     end
 
@@ -407,7 +494,9 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
         end
     end
 
-    if melee_montage then
+    populate_damage_types()
+
+    if melee_montage and is_allowing_vr_mode then
         -- no way in hell we want to use root motion for melee attacks
         melee_montage.bEnableRootMotionTranslation = false
         --[[melee_montage.bEnableRootMotionTranslation = false
@@ -420,11 +509,12 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
             local anim_instance = mesh.AnimScriptInstance
             local weapon = anim_instance and anim_instance:GetEquippedWeapon() or nil
 
-            if weapon and last_anim_notify_melee_obj then
+            if weapon and last_anim_notify_melee_obj and weapon:is_a(SHItemWeaponMelee_c) then
                 local is_playing_melee_attack = anim_instance["Is Playing Melee Attack"](anim_instance, {}, {}, {}, {}, {})
 
-                if is_playing_melee_attack then
+                if is_playing_melee_attack or anim_instance:Montage_IsPlaying(melee_montage) then
                     anim_instance:SetRootMotionMode(1) -- IgnoreRootMotion
+                    melee_data.root_motion_needs_reset = true
                     --[[local root_socket = mesh:GetSocketLocation(root_fname)
                     --local root_rot = mesh:GetSocketRotation(root_fname)
                     local mesh_location = mesh:K2_GetComponentLocation()
@@ -434,13 +524,15 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
                     local final_location = pawn.RootComponent:K2_GetComponentLocation()
                     final_location.Z = mesh_location.Z
                     mesh:K2_SetWorldLocation(final_location, false, reusable_hit_result, false)]]
-                else -- Enable root motion outside of melee attacks.
+                elseif melee_data.root_motion_needs_reset then
+                    -- Enable root motion outside of melee attacks.
                     --[[local mesh_location = mesh:K2_GetComponentLocation()
                     --local final_location = pawn:K2_GetActorLocation()
                     local final_location = pawn.RootComponent:K2_GetComponentLocation()
                     final_location.Z = mesh_location.Z
                     mesh:K2_SetWorldLocation(final_location, false, reusable_hit_result, false)]]
                     anim_instance:SetRootMotionMode(3) -- RootMotionFromMontagesOnly
+                    melee_data.root_motion_needs_reset = false
                 end
 
                 local combat_anim_subcomp = animation:FindSubcomponentByClass(SHAnimCombatSubcomp_c)
@@ -489,8 +581,50 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
                                 attack.CurrentMontage = melee_montage
                                 attack.InputData = melee_montage
 
+                                local animdata = attack.PlayAnimationData
+
+                                if animdata then
+                                    animdata.SlotName = melee_attack_name
+                                    --attack:PlayOrOverwriteRequest(0.0, animdata, temp_vec3:set(0, 0, 0))
+                                end
+
+                                --if anim_instance:GetCurrentActiveMontage() ~= melee_montage then
+                                if not anim_instance:Montage_IsPlaying(melee_montage) then
+                                    anim_instance:Montage_Play(melee_montage, 1.0, 0, 0.0, false)
+                                end
+
                                 -- Triggers Notify function, which does the melee attack traces and damage
-                                last_anim_notify_melee_obj:DANGEROUS_call_member_virtual(ANIMNOTIFY_NOTIFY_VTABLE_INDEX, mesh, melee_montage)
+                                reusable_anim_notify_ref:write_qword(0x10, last_anim_notify_melee_obj:get_address()) -- 0x10 is the offset of Notify
+                                reusable_anim_notify_ref.NotifySource = mesh
+                                last_anim_notify_melee_obj:write_qword(0x30, mesh:get_address()) -- 0x30 is the offset of MeshContext
+
+                                -- We need to directly write the damage type address into the melee weapon
+                                -- This is because the game uses this to determine hit reactions.
+                                -- AFAIK there is no reflected method to do this, so we have to do it manually.
+                                local damage_type = lookup_damage_type("PistolDamage_C") -- using pistol damage because it can "kneecap" enemies
+
+                                if damage_type ~= nil then
+                                    local defobj = damage_type:get_class_default_object()
+                                    if defobj:is_a(SHMeleeBaseDamage_c) then
+                                        defobj.bIsGroundHit = true -- Lets attacks hit the ground
+                                    end
+
+                                    weapon:write_qword(MELEE_WEAPON_DAMAGE_TYPE_OFFSET, damage_type:get_address())
+                                end
+
+                                local pcall_res = pcall(function()
+                                    last_anim_notify_melee_obj:DANGEROUS_call_member_virtual(ANIMNOTIFY_NOTIFY_VTABLE_INDEX + 1, mesh, melee_montage, reusable_anim_notify_ref)
+                                end)
+
+                                if not pcall_res then
+                                    print("Failed to call melee notify")
+                                end
+
+                                -- Reset damage type
+                                weapon:write_qword(MELEE_WEAPON_DAMAGE_TYPE_OFFSET, 0)
+
+                                -- Reset mesh context
+                                last_anim_notify_melee_obj:write_qword(0x30, 0)
 
                                 -- Reset the attack request back so we don't break something
                                 attack.CurrentMontage = nil
@@ -499,11 +633,12 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
                                 if not triggered_melee_recently then
                                     vr.trigger_haptic_vibration(0, 0.1, 0.1, 0.1, vr.get_right_joystick_source()) -- Very light vibration
 
-                                    local current_montage = anim_instance:GetCurrentActiveMontage()
+                                    --local current_montage = anim_instance:GetCurrentActiveMontage()
 
-                                    if current_montage == melee_montage then
+                                    --if current_montage == melee_montage then
+                                    if anim_instance:Montage_IsPlaying(melee_montage) then
                                         --anim_instance:Montage_Stop(0.0, current_montage)
-                                        anim_instance:Montage_SetPosition(current_montage, current_montage:GetPlayLength())
+                                        --anim_instance:Montage_SetPosition(current_montage, current_montage:GetPlayLength())
                                     end
                                 end
                             end
@@ -928,12 +1063,6 @@ local function should_vr_mode()
     return true
 end
 
-local is_allowing_vr_mode = false
-local last_roomscale_value = false
-local forward = nil
-local last_delta = 1.0
-local last_level = nil
-
 local function on_level_changed(new_level)
     -- All actors can be assumed to be deleted when the level changes
     print("Level changed")
@@ -945,6 +1074,8 @@ local function on_level_changed(new_level)
     right_hand_actor = nil
     left_hand_component = nil
     right_hand_component = nil
+
+    melee_data.root_motion_needs_reset = true
 end
 
 uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
@@ -1089,6 +1220,18 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
                 mesh:SetRenderInMainPass(true)
                 mesh:SetRenderInDepthPass(true)
                 mesh:SetRenderCustomDepth(true)
+            end
+
+            local animation = my_pawn and my_pawn.Animation or nil
+
+            if animation then
+                local instance = animation.AnimInstance
+
+                if instance then
+                    instance:SetRootMotionMode(2) -- Default
+                    melee_data.root_motion_needs_reset = false
+                    print("Reset root motion mode")
+                end
             end
         end
 
