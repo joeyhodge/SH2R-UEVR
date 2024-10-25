@@ -300,7 +300,7 @@ local reusable_hit_reaction_result = StructObject.new(SHHitReactionResult_c)
 local reusable_anim_notify_ref = StructObject.new(AnimNotifyEventReference_c)
 local melee_montage = nil
 local ANIMNOTIFY_NOTIFY_VTABLE_INDEX = 88
-local MELEE_WEAPON_DAMAGE_TYPE_OFFSET = 0x6D8
+local MELEE_WEAPON_DAMAGE_TYPE_OFFSET = 0x6D8 -- LightEffect + 0x28, might be a way of automating this
 local last_anim_notify_melee_obj = nil
 local last_anim_notify_modify_combat_input_obj = nil
 
@@ -347,11 +347,14 @@ local melee_data = {
     right_hand_pos = Vector3f.new(0, 0, 0),
     last_right_hand_raw_pos = Vector3f.new(0, 0, 0),
     last_time_messed_with_attack_request = 0.0,
+    last_enemy_hit_time = 0.0,
     root_motion_needs_reset = true,
     known_damage_types = {},
     damage_type_dict = {},
+    last_weapon = nil,
     last_repopulate_attempt = 0.0,
-    first = true
+    first = true,
+    enemy_combo_index = 0
 }
 
 local function populate_damage_types()
@@ -378,7 +381,7 @@ local function lookup_damage_type(name)
 
     local v = melee_data.damage_type_dict[name]
 
-    if v ~= nil and UEVR_UObjectHook.exists(v) and v:is_a(DamageType_c) then
+    if v ~= nil and UEVR_UObjectHook.exists(v) and v:get_class_default_object():is_a(DamageType_c) then
         return v
     end
 
@@ -395,11 +398,23 @@ end
 
 uevr.sdk.callbacks.on_lua_event(function(event_name, event_string)
     if event_name == "OnMeleeTraceSuccess" then
+        local now = os.clock()
         melee_data.accumulated_time = 0.0
         melee_data.last_tried_melee_time = 0.0
 
         if event_string == "Enemy" then
+            if math.abs(now - melee_data.last_enemy_hit_time) > 1.0 then
+                if melee_data.enemy_combo_index ~= 1 then
+                    print("Combo reset")
+                end
+                melee_data.enemy_combo_index = 0
+            else
+                melee_data.enemy_combo_index = ((melee_data.enemy_combo_index + 1) % 3)
+                print("Combo index: " .. tostring(melee_data.enemy_combo_index))
+            end
+
             melee_data.cooldown_time = 0.5
+            melee_data.last_enemy_hit_time = now
         elseif event_string == "Glass" then
             melee_data.cooldown_time = 0.5
         else
@@ -413,10 +428,21 @@ uevr.sdk.callbacks.on_lua_event(function(event_name, event_string)
 
             triggered_melee_recently = true
         end
+    elseif event_name == "OnMeleeHitLeg" then
+        if melee_data.last_weapon ~= nil then
+            local pistol_damage = lookup_damage_type("PistolDamage_C")
+
+            if pistol_damage ~= nil then
+                -- Enable kneecapping damage (makes the enemy fall down sometimes if hit in the leg)
+                melee_data.last_weapon:write_qword(MELEE_WEAPON_DAMAGE_TYPE_OFFSET, pistol_damage:get_address())
+            end
+        end
     end
 end)
 
 uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
+    melee_data.last_weapon = nil
+
     if not right_hand_component or not left_hand_component then
         return
     end
@@ -510,27 +536,15 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
             local weapon = anim_instance and anim_instance:GetEquippedWeapon() or nil
 
             if weapon and last_anim_notify_melee_obj and weapon:is_a(SHItemWeaponMelee_c) then
+                melee_data.last_weapon = weapon
+
                 local is_playing_melee_attack = anim_instance["Is Playing Melee Attack"](anim_instance, {}, {}, {}, {}, {})
 
                 if is_playing_melee_attack or anim_instance:Montage_IsPlaying(melee_montage) then
                     anim_instance:SetRootMotionMode(1) -- IgnoreRootMotion
                     melee_data.root_motion_needs_reset = true
-                    --[[local root_socket = mesh:GetSocketLocation(root_fname)
-                    --local root_rot = mesh:GetSocketRotation(root_fname)
-                    local mesh_location = mesh:K2_GetComponentLocation()
-                    local delta_mesh = (mesh_location - root_socket)
-                    delta_mesh.Z = 0.0
-                    --local final_location = pawn:K2_GetActorLocation() + delta_mesh
-                    local final_location = pawn.RootComponent:K2_GetComponentLocation()
-                    final_location.Z = mesh_location.Z
-                    mesh:K2_SetWorldLocation(final_location, false, reusable_hit_result, false)]]
                 elseif melee_data.root_motion_needs_reset then
                     -- Enable root motion outside of melee attacks.
-                    --[[local mesh_location = mesh:K2_GetComponentLocation()
-                    --local final_location = pawn:K2_GetActorLocation()
-                    local final_location = pawn.RootComponent:K2_GetComponentLocation()
-                    final_location.Z = mesh_location.Z
-                    mesh:K2_SetWorldLocation(final_location, false, reusable_hit_result, false)]]
                     anim_instance:SetRootMotionMode(3) -- RootMotionFromMontagesOnly
                     melee_data.root_motion_needs_reset = false
                 end
@@ -601,7 +615,24 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
                                 -- We need to directly write the damage type address into the melee weapon
                                 -- This is because the game uses this to determine hit reactions.
                                 -- AFAIK there is no reflected method to do this, so we have to do it manually.
-                                local damage_type = lookup_damage_type("PistolDamage_C") -- using pistol damage because it can "kneecap" enemies
+                                local weapon_name = weapon:get_fname():to_string()
+                                local damage_type = nil
+
+                                --[[if weapon_name:find("Plank") then
+                                    damage_type = lookup_damage_type("Wdp_Combo_L1_DamageType_C")
+                                elseif weapon_name:find("IronPipe") then
+                                    damage_type = lookup_damage_type("Wdp_Combo_L1_DamageType_C")
+                                elseif weapon_name:find("Chainsaw") then
+                                    damage_type = lookup_damage_type("Wdp_Combo_L1_DamageType_C")
+                                else
+                                    damage_type = lookup_damage_type("Wdp_Combo_L1_DamageType_C") -- Default to plank
+                                end]]
+
+                                local dtype_str = "Wdp_Combo_L" .. tostring(melee_data.enemy_combo_index + 1) .. "_DamageType_C"
+                                damage_type = lookup_damage_type(dtype_str)
+                                if damage_type == nil then
+                                    print("Failed to find damage type: " .. dtype_str)
+                                end
 
                                 if damage_type ~= nil then
                                     local defobj = damage_type:get_class_default_object()
@@ -940,7 +971,7 @@ local last_crosshair_widget = nil
 local investigating_item = nil
 
 vr.set_mod_value("VR_RoomscaleMovement", "false")
-vr.set_mod_value("VR_AimMethod", 0)
+vr.set_mod_value("VR_AimMethod", "0")
 
 local function should_vr_mode()
     anim_instance = nil

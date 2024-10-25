@@ -112,8 +112,14 @@ void SHPlugin::hook_melee_trace_check() {
     PLUGIN_LOG_ONCE("Hooked MeleeWeaponEnvTrace");
 }
 
-bool SHPlugin::on_melee_trace_check_internal(API::UObject* melee_item, float a2, float a3, float a4, void* a5, void* a6, uevr::API::TArray<SHPlugin::FHitResult>& hit_results) {
-    PLUGIN_LOG_ONCE("SHPlugin::on_melee_trace_check_internal(0x%p, %f, %f, %f, 0x%p, 0x%p, %d)", melee_item, a2, a3, a4, a5, a6, hit_results.count);
+bool SHPlugin::on_melee_trace_check_internal(
+    API::UObject* melee_item, 
+    float a2, float a3, float hit_rotation_ratio, 
+    void* a5, void* a6, 
+    uevr::API::TArray<SHPlugin::FHitResult>& hit_results
+) 
+{
+    PLUGIN_LOG_ONCE("SHPlugin::on_melee_trace_check_internal(0x%p, %f, %f, %f, 0x%p, 0x%p, %d)", melee_item, a2, a3, hit_rotation_ratio, a5, a6, hit_results.count);
 
     if (melee_item == nullptr) {
         return false;
@@ -121,7 +127,7 @@ bool SHPlugin::on_melee_trace_check_internal(API::UObject* melee_item, float a2,
 
     if (!API::get()->param()->vr->is_using_controllers()) {
         // Just do what the game originally wanted to do
-        return m_melee_trace_check_hook_fn(melee_item, a2, a3, a4, a5, a6, hit_results);
+        return m_melee_trace_check_hook_fn(melee_item, a2, a3, hit_rotation_ratio, a5, a6, hit_results);
     }
 
     // Let's try and do it ourselves
@@ -191,7 +197,7 @@ bool SHPlugin::on_melee_trace_check_internal(API::UObject* melee_item, float a2,
         //mesh_component->call_function(L"SetSimulatePhysics", &simulate_physics_params);
         //mesh_component->call_function(L"SetAllBodiesSimulatePhysics", &simulate_physics_params);
 
-        struct {
+        /*struct {
             uint8_t collision_object_type{5}; // ECC_PhysicsBody
         } set_collision_object_type_params;
 
@@ -218,7 +224,7 @@ bool SHPlugin::on_melee_trace_check_internal(API::UObject* melee_item, float a2,
 
         struct {
             bool generate_overlap_events{true};
-        } generate_overlap_events;
+        } generate_overlap_events;*/
 
         //mesh_component->call_function(L"SetGenerateOverlapEvents", &generate_overlap_events);
 
@@ -366,14 +372,19 @@ bool SHPlugin::on_melee_trace_check_internal(API::UObject* melee_item, float a2,
                             auto& bone_name = hit_result.BoneName;
 
                             if (bone_name.number >= 0 || bone_name.comparison_index >= 0) {
-                                printf("Hit bone: %s\n", utility::narrow(bone_name.to_string()).c_str());
-                                const auto is_pelvis = bone_name.to_string().find(L"pelvis") != std::wstring::npos;
+                                //printf("Hit bone: %s\n", utility::narrow(bone_name.to_string()).c_str());
+                                const auto bone_name_str = bone_name.to_string();
+                                const auto is_pelvis = bone_name_str.contains(L"pelvis");
                                 if (is_enemy && !is_pelvis) {
-                                    struct {
+                                    if (bone_name_str.contains(L"thigh") || bone_name_str.contains(L"calf") || bone_name_str.contains(L"foot")) {
+                                        API::get()->dispatch_lua_event("OnMeleeHitLeg", "");
+                                    }
+
+                                    /*struct {
                                         bool new_physics{false};
                                     } physics_blend_params;
 
-                                    component->call_function(L"SetSimulatePhysics", &physics_blend_params);
+                                    component->call_function(L"SetSimulatePhysics", &physics_blend_params);*/
 
                                     //physics_blend_params.new_physics  = true;
                                     //component->call_function(L"SetEnablePhysicsBlending", &physics_blend_params);
@@ -389,7 +400,7 @@ bool SHPlugin::on_melee_trace_check_internal(API::UObject* melee_item, float a2,
 
                                     set_all_bodies_below_simulate.bone_name = bone_name;
 
-                                    component->call_function(L"SetAllBodiesBelowSimulatePhysics", &set_all_bodies_below_simulate);
+                                    //component->call_function(L"SetAllBodiesBelowSimulatePhysics", &set_all_bodies_below_simulate);
 
                                     struct {
                                         API::FName bone_name{};
@@ -400,7 +411,7 @@ bool SHPlugin::on_melee_trace_check_internal(API::UObject* melee_item, float a2,
 
                                     set_all_bodies_below_physics_blend_weight.bone_name = bone_name;
 
-                                    component->call_function(L"SetAllBodiesBelowPhysicsBlendWeight", &set_all_bodies_below_physics_blend_weight);
+                                    //component->call_function(L"SetAllBodiesBelowPhysicsBlendWeight", &set_all_bodies_below_physics_blend_weight);
 
                                     /*struct {
                                         float physics_blend_weight{1.0f};
@@ -458,7 +469,7 @@ bool SHPlugin::on_melee_trace_check_internal(API::UObject* melee_item, float a2,
                                         physical_animation_params.data.MaxLinearForce = 0.0f;
                                         physical_animation_params.data.MaxAngularForce = 0.0f;
 
-                                        physical_animation_component->call_function(L"ApplyPhysicalAnimationSettingsBelow", &physical_animation_params);
+                                        //physical_animation_component->call_function(L"ApplyPhysicalAnimationSettingsBelow", &physical_animation_params);
                                         //printf("Applied physical animation settings to %s\n", utility::narrow(bone_name.to_string()).c_str());
                                     }
                                 }
@@ -470,7 +481,7 @@ bool SHPlugin::on_melee_trace_check_internal(API::UObject* melee_item, float a2,
                                 } impulse_params;
 
                                 //impulse_params.impulse = glm::f64vec3{0.0, 0.0, 1000.0};
-                                impulse_params.impulse = hit_result.ImpactNormal * -50000.0;
+                                impulse_params.impulse = hit_result.ImpactNormal * -10000.0;
                                 impulse_params.location = hit_result.ImpactPoint;
                                 impulse_params.bone_name = bone_name;
 

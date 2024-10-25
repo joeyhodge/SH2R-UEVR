@@ -92,7 +92,13 @@ private:
     using MeleeTraceCheckFn = bool (*)(uevr::API::UObject*, float, float, float, void*, void*, uevr::API::TArray<FHitResult>&);
     MeleeTraceCheckFn m_melee_trace_check_hook_fn{};
     bool on_melee_trace_check_internal(uevr::API::UObject*, float, float, float, void*, void*, uevr::API::TArray<FHitResult>&);
-    static bool on_melee_trace_check(uevr::API::UObject* a1, float a2, float a3, float a4, void* a5, void* a6, uevr::API::TArray<FHitResult>& hit_results) {
-        return g_plugin->on_melee_trace_check_internal(a1, a2, a3, a4, a5, a6, hit_results);
+    static bool on_melee_trace_check(
+        uevr::API::UObject* a1, 
+        float a2, float a3, float hit_rotation_ratio, 
+        void* a5, void* a6, 
+        uevr::API::TArray<FHitResult>& hit_results
+    ) 
+    {
+        return g_plugin->on_melee_trace_check_internal(a1, a2, a3, hit_rotation_ratio, a5, a6, hit_results);
     }
 };
