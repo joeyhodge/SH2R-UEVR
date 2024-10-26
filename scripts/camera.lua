@@ -1223,14 +1223,12 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
     local item_investigation_widget = find_item_investigation_widget()
 
     if item_investigation_widget and right_hand_widget_component then
-        item_investigation_widget:RemoveFromViewport()
-
         local main_container = item_investigation_widget.MainContainer
-
         if main_container ~= nil and main_container:IsRendered() then
             right_hand_widget_component:SetWidget(item_investigation_widget.ItemNameTextBlock)
         else
             right_hand_widget_component:SetWidget(nil)
+            --item_investigation_widget:AddToViewport(0)
         end
     end
 
