@@ -238,6 +238,7 @@ local root_fname = kismet_string_library:Conv_StringToName("root")
 local miss_fname = kismet_string_library:Conv_StringToName("Miss")
 local hit_enemy_fname = kismet_string_library:Conv_StringToName("HitEnemy")
 local muzzle_fx_fname = kismet_string_library:Conv_StringToName("FX_muzzle")
+local none_fname = kismet_string_library:Conv_StringToName("None")
 
 
 local game_engine_class = find_required_object("Class /Script/Engine.GameEngine")
@@ -251,6 +252,23 @@ local temp_transform = StructObject.new(ftransform_c)
 local color_c = find_required_object("ScriptStruct /Script/CoreUObject.LinearColor")
 local zero_color = StructObject.new(color_c)
 
+local SHGameplayItemInvestigationWidget_c = find_required_object("Class /Script/SHProto.SHGameplayItemInvestigationWidget")
+
+local function find_item_investigation_widget()
+    local widgets = SHGameplayItemInvestigationWidget_c:get_objects_matching(false)
+    if widgets == nil or #widgets == 0 then
+        return nil
+    end
+
+    for _, widget in ipairs(widgets) do
+        if widget.OwnerCharacter ~= nil then
+            return widget
+        end
+    end
+
+    return nil
+end
+
 local crosshair_actor = nil
 local hmd_actor = nil -- The purpose of the HMD actor is to accurately track the HMD's world transform
 local left_hand_actor = nil
@@ -258,6 +276,8 @@ local right_hand_actor = nil
 local left_hand_component = nil
 local right_hand_component = nil
 local hmd_component = nil
+
+local right_hand_widget_component = nil
 
 local LegacyCameraShake_c = find_required_object("Class /Script/GameplayCameras.LegacyCameraShake")
 
@@ -832,6 +852,8 @@ local function reset_hand_actors()
     left_hand_actor = nil
     right_hand_actor = nil
     hmd_actor = nil
+    right_hand_component = nil
+    left_hand_component = nil
 end
 
 local function reset_hand_actors_if_deleted()
@@ -907,6 +929,11 @@ local function spawn_hand_actors()
     right_hand_component = right_hand_actor:AddComponentByClass(motion_controller_component_c, false, temp_transform, false)
     hmd_component = hmd_actor:AddComponentByClass(scene_component_c, false, temp_transform, false)
 
+    temp_transform.Translation = temp_vec3:set(0, 0, 0)
+    temp_transform.Rotation.W = 1.0
+    temp_transform.Scale3D = temp_vec3:set(0.3, 0.3, 0.3)
+    right_hand_widget_component = right_hand_actor:AddComponentByClass(widget_component_c, false, temp_transform, false)
+
     if left_hand_component == nil then
         print("Failed to add left hand scene component")
         return
@@ -922,6 +949,11 @@ local function spawn_hand_actors()
         return
     end
 
+    if right_hand_widget_component == nil then
+        print("Failed to add right hand widget component")
+        return
+    end
+
     left_hand_component.MotionSource = kismet_string_library:Conv_StringToName("Left")
     right_hand_component.MotionSource = kismet_string_library:Conv_StringToName("Right")
     left_hand_component.Hand = 0
@@ -932,6 +964,37 @@ local function spawn_hand_actors()
     left_hand_actor:FinishAddComponent(left_hand_component, false, temp_transform)
     right_hand_actor:FinishAddComponent(right_hand_component, false, temp_transform)
     hmd_actor:FinishAddComponent(hmd_component, false, temp_transform)
+
+    local wanted_mat_name = "Material /Engine/EngineMaterials/GizmoMaterial.GizmoMaterial"
+    local wanted_mat = api:find_uobject(wanted_mat_name)
+    
+    right_hand_widget_component:SetVisibility(true)
+    right_hand_widget_component:SetHiddenInGame(false)
+    right_hand_widget_component:SetCollisionEnabled(0)
+
+    --[[right_hand_widget_component:SetRenderCustomDepth(true)
+    right_hand_widget_component:SetCustomDepthStencilValue(100)
+    right_hand_widget_component:SetCustomDepthStencilWriteMask(1)
+    right_hand_widget_component:SetRenderInDepthPass(false)]]
+
+    right_hand_widget_component:SetRenderInDepthPass(false)
+
+    --[[if wanted_mat then
+        wanted_mat.bDisableDepthTest = true
+        wanted_mat.BlendMode = 2
+        --wanted_mat.MaterialDomain = 0
+        --wanted_mat.ShadingModel = 0
+        right_hand_widget_component:SetMaterial(1, wanted_mat)
+    end]]
+    
+    right_hand_widget_component.BlendMode = 2
+
+    right_hand_actor:FinishAddComponent(right_hand_widget_component, false, temp_transform)
+
+    --right_hand_widget_component:K2_AttachToComponent(right_hand_component, none_fname, 0, 0, 0, false)
+
+    right_hand_widget_component:K2_SetRelativeLocation(temp_vec3:set(0, 0, 0), false, reusable_hit_result, false)
+    right_hand_widget_component:K2_SetRelativeRotation(temp_vec3:set(45, 180, 0), false, reusable_hit_result, false)
 
     -- We don't need to add these, UObjectHook will handle the placement of motion controller components automatically
     --[[local leftstate = UEVR_UObjectHook.get_or_add_motion_controller_state(left_hand_component)
@@ -1154,6 +1217,20 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
 
         if defence_settings then
             defence_settings.bDodgeUseViewSnapOnEnemy = false -- Stops dodging from jarringly moving the camera
+        end
+    end
+
+    local item_investigation_widget = find_item_investigation_widget()
+
+    if item_investigation_widget and right_hand_widget_component then
+        item_investigation_widget:RemoveFromViewport()
+
+        local main_container = item_investigation_widget.MainContainer
+
+        if main_container ~= nil and main_container:IsRendered() then
+            right_hand_widget_component:SetWidget(item_investigation_widget.ItemNameTextBlock)
+        else
+            right_hand_widget_component:SetWidget(nil)
         end
     end
 
