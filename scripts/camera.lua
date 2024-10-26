@@ -1235,6 +1235,11 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
         last_head_z = position.z -- So we dont get weird lerping from across the map when we re-enable VR mode
 
         if last_roomscale_value == true or last_vr_enable_value == true then
+            if camera_component then
+                -- Reset relative location
+                camera_component:K2_SetRelativeLocation(temp_vec3:set(0, 0, 0), false, empty_hitresult, false)
+            end
+
             if my_pawn ~= nil then
                 detach_flashlight(my_pawn)
             end
@@ -1581,6 +1586,14 @@ uevr.sdk.callbacks.on_post_calculate_stereo_view_offset(function(device, view_in
         last_camera_y = last_camera_y + hmd_delta.Y
     end
 
+    local camera_overlap = my_pawn.CameraOverlapHandler
+
+    if camera_overlap ~= nil then
+        camera_overlap:SetComponentTickEnabled(false) -- Stops camera from making pawn and other things near it invisible
+    end
+
+    -- moves real camera to the VR camera position, this corrects audio and interactions
+    camera_component:K2_SetWorldLocation(position, false, empty_hitresult, true)
 
     -- Using the map and some other things
     if anim_instance and anim_instance.bWholeBodyAnimation then
