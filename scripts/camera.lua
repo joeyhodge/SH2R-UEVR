@@ -16,6 +16,8 @@ local SHItemWeaponMelee_c = find_required_object("Class /Script/SHProto.SHItemWe
 local SHItemExecutiveBase_c = find_required_object("Class /Script/SHProto.SHItemExecutiveBase")
 local SHCameraAnimationExecutive_c = find_required_object("Class /Script/SHProto.SHCameraAnimationExecutive")
 local SHAnimCombatSubcomp_c = find_required_object("Class /Script/SHProto.SHAnimCombatSubcomp")
+local Material_c = find_required_object("Class /Script/Engine.Material")
+
 --local SHCharAnimationInstance_c = find_required_object("AnimBlueprintGeneratedClass /Game/Game/Characters/Humans/JamesSunderland/Animation/AnimationBlueprints/CH_JamesAnimBP.CH_JamesAnimBP_C")
 
 --local AnimNode_Fabrik = find_required_object("ScriptStruct /Script/AnimGraphRuntime.AnimNode_Fabrik")
@@ -967,31 +969,38 @@ local function spawn_hand_actors()
     left_hand_actor:FinishAddComponent(left_hand_component, false, temp_transform)
     right_hand_actor:FinishAddComponent(right_hand_component, false, temp_transform)
     hmd_actor:FinishAddComponent(hmd_component, false, temp_transform)
-
-    local wanted_mat_name = "Material /Engine/EngineMaterials/GizmoMaterial.GizmoMaterial"
-    local wanted_mat = api:find_uobject(wanted_mat_name)
     
     right_hand_widget_component:SetVisibility(true)
     right_hand_widget_component:SetHiddenInGame(false)
     right_hand_widget_component:SetCollisionEnabled(0)
-
-    --[[right_hand_widget_component:SetRenderCustomDepth(true)
-    right_hand_widget_component:SetCustomDepthStencilValue(100)
-    right_hand_widget_component:SetCustomDepthStencilWriteMask(1)
-    right_hand_widget_component:SetRenderInDepthPass(false)]]
-
     right_hand_widget_component:SetRenderInDepthPass(false)
+    right_hand_widget_component:SetTwoSided(true)
 
-    --[[if wanted_mat then
-        wanted_mat.bDisableDepthTest = true
-        wanted_mat.BlendMode = 2
-        --wanted_mat.MaterialDomain = 0
-        --wanted_mat.ShadingModel = 0
-        right_hand_widget_component:SetMaterial(1, wanted_mat)
-    end]]
+    -- Locate all materials that have an Unlit shading model
+    --[[local all_materials = Material_c:get_objects_matching(false)
+    local unlit_materials = {}
+
+    for i, v in ipairs(all_materials) do
+        if v.ShadingModel == 0 then
+            print("Found unlit material: " .. v:get_full_name())
+            table.insert(unlit_materials, v)
+        end
+    end
+
+    local wanted_mat = unlit_materials[1]
+
+    right_hand_widget_component:SetMaterial(1, wanted_mat)]]
     
-    right_hand_widget_component.BlendMode = 2
-
+    right_hand_widget_component.BlendMode = 1
+    right_hand_widget_component.Space = 0 -- World
+    right_hand_widget_component.LightingChannels.bChannel0 = false
+    --right_hand_widget_component.MaskedMaterial = wanted_mat
+    --right_hand_widget_component.OverlayMaterial = wanted_mat
+    right_hand_widget_component.bCastContactShadow = false
+    right_hand_widget_component.bCastDynamicShadow = false
+    right_hand_widget_component.bCastStaticShadow = false
+    right_hand_widget_component.bAffectDynamicIndirectLighting = false
+    right_hand_widget_component.bAffectDistanceFieldLighting = false
     right_hand_actor:FinishAddComponent(right_hand_widget_component, false, temp_transform)
 
     --right_hand_widget_component:K2_AttachToComponent(right_hand_component, none_fname, 0, 0, 0, false)
@@ -1223,15 +1232,16 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
         end
     end
 
+    -- Set displayed item text in world space
     local item_investigation_widget = find_item_investigation_widget()
 
     if item_investigation_widget and right_hand_widget_component then
         local main_container = item_investigation_widget.MainContainer
         if main_container ~= nil and main_container:IsRendered() then
             right_hand_widget_component:SetWidget(item_investigation_widget.ItemNameTextBlock)
+            --item_investigation_widget.ItemNameTextBlock:SetFontMaterial(nil)
         else
             right_hand_widget_component:SetWidget(nil)
-            --item_investigation_widget:AddToViewport(0)
         end
     end
 
@@ -1669,7 +1679,13 @@ uevr.sdk.callbacks.on_post_calculate_stereo_view_offset(function(device, view_in
     local camera_overlap = my_pawn.CameraOverlapHandler
 
     if camera_overlap ~= nil then
-        camera_overlap:SetComponentTickEnabled(false) -- Stops camera from making pawn and other things near it invisible
+        if camera_overlap:IsComponentTickEnabled() then
+            camera_overlap:SetComponentTickEnabled(false) -- Stops camera from making pawn and other things near it invisible
+            print("Disabled camera overlap handler")
+        end
+
+        --camera_overlap:write_qword(0xD0, 0) -- Nulls out the owner actor, this stops some logic from functioning when we start aiming which hides the pawn
+        camera_overlap.OwnerCharacterPlay = nil -- Nulls out the owner actor, this stops some logic from functioning when we start aiming which hides the pawn
     end
 
     -- moves real camera to the VR camera position, this corrects audio and interactions
