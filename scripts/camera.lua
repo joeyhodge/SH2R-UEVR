@@ -475,9 +475,9 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
     melee_data.right_hand_pos.z = melee_data.right_hand_pos_raw.z]]
     melee_data.right_hand_pos:set(melee_data.right_hand_pos_raw.x, melee_data.right_hand_pos_raw.y, melee_data.right_hand_pos_raw.z)
 
-    if first then
+    if melee_data.first then
         melee_data.last_right_hand_raw_pos:set(melee_data.right_hand_pos.x, melee_data.right_hand_pos.y, melee_data.right_hand_pos.z)
-        first = false
+        melee_data.first = false
     end
 
     local velocity = (melee_data.right_hand_pos - melee_data.last_right_hand_raw_pos) * (1 / delta)
@@ -554,11 +554,11 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
             local animation = pawn.Animation
             local anim_instance = mesh.AnimScriptInstance
             local weapon = anim_instance and anim_instance:GetEquippedWeapon() or nil
+            local has_melee_weapon = weapon ~= nil and weapon:is_a(SHItemWeaponMelee_c)
 
-            if weapon and last_anim_notify_melee_obj and weapon:is_a(SHItemWeaponMelee_c) then
-                melee_data.last_weapon = weapon
-
-                local is_playing_melee_attack = anim_instance["Is Playing Melee Attack"](anim_instance, {}, {}, {}, {}, {})
+            -- Disable root motion
+            if anim_instance then
+                local is_playing_melee_attack = has_melee_weapon and anim_instance["Is Playing Melee Attack"](anim_instance, {}, {}, {}, {}, {}) or false
 
                 if is_playing_melee_attack or anim_instance:Montage_IsPlaying(melee_montage) then
                     anim_instance:SetRootMotionMode(1) -- IgnoreRootMotion
@@ -568,7 +568,10 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
                     anim_instance:SetRootMotionMode(3) -- RootMotionFromMontagesOnly
                     melee_data.root_motion_needs_reset = false
                 end
+            end
 
+            if has_melee_weapon and last_anim_notify_melee_obj then
+                melee_data.last_weapon = weapon
                 local combat_anim_subcomp = animation:FindSubcomponentByClass(SHAnimCombatSubcomp_c)
 
                 -- Stops normal melee attacks (aka pressing attack button)
@@ -1340,7 +1343,7 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
 
                 if instance then
                     instance:SetRootMotionMode(2) -- Default
-                    melee_data.root_motion_needs_reset = false
+                    melee_data.root_motion_needs_reset = true
                     print("Reset root motion mode")
                 end
             end
@@ -1490,9 +1493,11 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
     local wanted_x = pawn_pos.X + (back_offset * forward.X)
     local wanted_y = pawn_pos.Y + (back_offset * forward.Y)
     local wanted_z = head_pos.Z
-    local camera_x = last_camera_x + ((wanted_x - last_camera_x) * (last_delta * 4))
-    local camera_y = last_camera_y + ((wanted_y - last_camera_y) * (last_delta * 4))
-    local head_z = last_head_z + ((wanted_z - last_head_z) * (last_delta * 2))
+    --local camera_x = last_camera_x + ((wanted_x - last_camera_x) * (last_delta * 4))
+    --local camera_y = last_camera_y + ((wanted_y - last_camera_y) * (last_delta * 4))
+    local camera_x = wanted_x -- This is okay because we've figured out how to disable root motion
+    local camera_y = wanted_y
+    local head_z = last_head_z + ((wanted_z - last_head_z) * (last_delta * 4))
     position.x = camera_x
     position.y = camera_y
     position.z = head_z
