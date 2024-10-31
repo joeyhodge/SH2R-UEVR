@@ -26,6 +26,11 @@ local Material_c = find_required_object("Class /Script/Engine.Material")
 local api = uevr.api
 local vr = uevr.params.vr
 
+-- Fix conflicts with other profiles
+if UEVR_UObjectHook.remove_all_motion_controller_states ~= nil then
+    UEVR_UObjectHook.remove_all_motion_controller_states()
+end
+
 --[[local BlueprintUpdateAnimation = SHCharAnimationInstance_c:find_function("BlueprintUpdateAnimation")
 
 BlueprintUpdateAnimation:hook_ptr(nil, function(fn, obj, locals, result)
