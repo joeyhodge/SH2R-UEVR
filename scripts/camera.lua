@@ -556,6 +556,14 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
         melee_montage.bEnableRootMotionRotation = false
         melee_montage.RootMotionRootLock = 0]]
         local mesh = pawn.Mesh
+        local combat = pawn.Combat
+
+        if combat then
+            if combat:read_byte(0x152) == 1 then
+                print("Combat input mode is 1")
+                combat:write_byte(0x152, 0) -- Reset combat input mode so we don't softlock
+            end
+        end
 
         if mesh then
             local animation = pawn.Animation
