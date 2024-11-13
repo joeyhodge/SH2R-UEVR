@@ -362,6 +362,7 @@ if AnimNotify_MeleeAttackCheck_Notify then
 end
 
 local AnimMontage_c = api:find_uobject("Class /Script/Engine.AnimMontage")
+local UClass_c = api:find_uobject("Class /Script/CoreUObject.Class")
 local melee_attack_name = kismet_string_library:Conv_StringToName("MeleeAttack")
 local triggered_melee_recently = false
 
@@ -408,7 +409,7 @@ local function lookup_damage_type(name)
 
     local v = melee_data.damage_type_dict[name]
 
-    if v ~= nil and UEVR_UObjectHook.exists(v) and v:get_class_default_object():is_a(DamageType_c) then
+    if v ~= nil and UEVR_UObjectHook.exists(v) and v:is_a(UClass_c) and v:get_class_default_object():is_a(DamageType_c) then
         return v
     end
 
@@ -474,12 +475,10 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
         return
     end
 
+    local now = os.clock()
     vr.get_pose(vr.get_right_controller_index(), melee_data.right_hand_pos_raw, melee_data.right_hand_q_raw)
 
     -- Copy without creating new userdata
-    --[[melee_data.right_hand_pos.x = melee_data.right_hand_pos_raw.x
-    melee_data.right_hand_pos.y = melee_data.right_hand_pos_raw.y
-    melee_data.right_hand_pos.z = melee_data.right_hand_pos_raw.z]]
     melee_data.right_hand_pos:set(melee_data.right_hand_pos_raw.x, melee_data.right_hand_pos_raw.y, melee_data.right_hand_pos_raw.z)
 
     if melee_data.first then
@@ -501,16 +500,11 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
         return
     end
 
-    --[[local subcomps = SHHitReactionSubcomponent_c:get_objects_matching(false)
-
-    for i, v in ipairs(subcomps) do
-
-    end]]
-
     if melee_montage == nil or not UEVR_UObjectHook.exists(melee_montage) or not melee_montage:is_a(AnimMontage_c) then
         local montages = AnimMontage_c:get_objects_matching(false)
         
         for i, v in ipairs(montages) do
+            --if v:get_fname():to_string():find("BreakingWall") then
             if v:get_fname():to_string() == "James_SideAttacks_GroundAttack_UpDown" then
             --if v:get_fname():to_string() == "James_StealthAttack_Hit1_v2" then
                 melee_montage = v
@@ -521,16 +515,9 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
     end
 
     if not last_anim_notify_melee_obj or not UEVR_UObjectHook.exists(last_anim_notify_melee_obj) or not last_anim_notify_melee_obj:is_a(AnimNotify_MeleeAttackCheck_c) then
-        --[[last_anim_notify_melee_obj = AnimNotify_MeleeAttackCheck_c:get_class_default_object() -- Will this work? let's find out
-
-        if last_anim_notify_melee_obj then
-            print("Got melee notify obj")
-        end]]
-
         local anim_notifies = AnimNotify_MeleeAttackCheck_c:get_objects_matching(false)
 
         for i, v in ipairs(anim_notifies) do
-            --if v:get_fname():to_string() == "James_SideAttacks_GroundAttack_UpDown" then
             if v:get_outer() == melee_montage then
                 last_anim_notify_melee_obj = v
                 print("Found melee notify obj @ " .. v:get_full_name())
@@ -600,11 +587,15 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
                             local current_montage = attack.CurrentMontage
 
                             if current_montage and attack:IsPlaying() then
-                                animdata.BlendInTime = 0.0
-                                animdata.BlendOutTime = 0.0
-                                anim_instance:Montage_SetPosition(current_montage, current_montage:GetPlayLength())
+                                local input_data = attack.InputData
 
-                                melee_data.last_time_messed_with_attack_request = 0.0
+                                if input_data == nil or input_data:get_full_name():find("BreakingWall") == nil then
+                                    animdata.BlendInTime = 0.0
+                                    animdata.BlendOutTime = 0.0
+                                    anim_instance:Montage_SetPosition(current_montage, current_montage:GetPlayLength())
+
+                                    melee_data.last_time_messed_with_attack_request = 0.0
+                                end
                             end
                         end
                     end
@@ -653,20 +644,10 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
                                 -- We need to directly write the damage type address into the melee weapon
                                 -- This is because the game uses this to determine hit reactions.
                                 -- AFAIK there is no reflected method to do this, so we have to do it manually.
-                                local weapon_name = weapon:get_fname():to_string()
                                 local damage_type = nil
 
-                                --[[if weapon_name:find("Plank") then
-                                    damage_type = lookup_damage_type("Wdp_Combo_L1_DamageType_C")
-                                elseif weapon_name:find("IronPipe") then
-                                    damage_type = lookup_damage_type("Wdp_Combo_L1_DamageType_C")
-                                elseif weapon_name:find("Chainsaw") then
-                                    damage_type = lookup_damage_type("Wdp_Combo_L1_DamageType_C")
-                                else
-                                    damage_type = lookup_damage_type("Wdp_Combo_L1_DamageType_C") -- Default to plank
-                                end]]
-
-                                local dtype_str = "Wdp_Combo_L" .. tostring(melee_data.enemy_combo_index + 1) .. "_DamageType_C"
+                                local hit_enemy_recently = os.clock() - melee_data.last_enemy_hit_time < 2.0
+                                local dtype_str = not hit_enemy_recently and "IronPipeDamage_C" or ("Wdp_Combo_L" .. tostring(melee_data.enemy_combo_index + 1) .. "_DamageType_C")
                                 damage_type = lookup_damage_type(dtype_str)
                                 if damage_type == nil then
                                     print("Failed to find damage type: " .. dtype_str)
