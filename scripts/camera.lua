@@ -1042,6 +1042,8 @@ local investigating_item = nil
 vr.set_mod_value("VR_RoomscaleMovement", "false")
 vr.set_mod_value("VR_AimMethod", "0")
 vr.set_mod_value("VR_RenderingMethod", "0") -- Native Stereo. Synced sequential doesn't work atm but people shouldnt be using that anyways
+vr.set_mod_value("UI_Distance", "1.0")
+vr.set_mod_value("UI_Size", "1.0")
 
 local function should_vr_mode()
     anim_instance = nil
