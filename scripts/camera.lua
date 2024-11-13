@@ -12,6 +12,7 @@ local SHCharacterPlayCameraComponent_c = find_required_object("Class /Script/SHP
 local SHGameplaySaveMenuWidget_c = find_required_object("Class /Script/SHProto.SHGameplaySaveMenuWidget")
 local SHMapRenderer_c = find_required_object("Class /Script/SHProto.SHMapRenderer")
 local SHJumpIntoHole_c = find_required_object("Class /Script/SHProto.SHJumpIntoHole")
+local SHTraversalLadder_c = find_required_object("Class /Script/SHProto.SHTraversalLadder")
 local SHItemWeaponMelee_c = find_required_object("Class /Script/SHProto.SHItemWeaponMelee")
 local SHItemExecutiveBase_c = find_required_object("Class /Script/SHProto.SHItemExecutiveBase")
 local SHCameraAnimationExecutive_c = find_required_object("Class /Script/SHProto.SHCameraAnimationExecutive")
@@ -144,6 +145,32 @@ local function is_jumping_into_hole(pawn)
     end
 
     return hole:IsInInteraction()
+end
+
+local function find_traversable_ladder(pawn)
+    local ladders = SHTraversalLadder_c:get_objects_matching(false)
+
+    if ladders == nil or #ladders == 0 then
+        return nil
+    end
+
+    for _, ladder in ipairs(ladders) do
+        local interacting_character = ladder.InteractingCharacter
+        if interacting_character == pawn then
+            return ladder
+        end
+    end
+
+    return nil
+end
+
+local function is_using_ladder(pawn)
+    local ladder = find_traversable_ladder(pawn)
+    if ladder == nil then
+        return false
+    end
+
+    return ladder ~= nil
 end
 
 local function get_investigating_item(pawn)
@@ -1087,6 +1114,10 @@ local function should_vr_mode()
     end
 
     if is_jumping_into_hole(my_pawn) then
+        return false
+    end
+
+    if is_using_ladder(my_pawn) then
         return false
     end
 
