@@ -1254,6 +1254,8 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
         return
     end
 
+    vr.set_mod_value("VR_RenderingMethod", "0") -- Native Stereo. Synced sequential doesn't work atm but people shouldnt be using that anyways
+
     local pawn = api:get_local_pawn(0)
 
     if not pawn then
