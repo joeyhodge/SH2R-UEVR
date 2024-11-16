@@ -409,7 +409,8 @@ local melee_data = {
     last_weapon = nil,
     last_repopulate_attempt = 0.0,
     first = true,
-    enemy_combo_index = 0
+    enemy_combo_index = 0,
+    hit_enemy = false,
 }
 
 local function populate_damage_types()
@@ -470,6 +471,7 @@ uevr.sdk.callbacks.on_lua_event(function(event_name, event_string)
 
             melee_data.cooldown_time = 0.5
             melee_data.last_enemy_hit_time = now
+            melee_data.hit_enemy = true
         elseif event_string == "Glass" then
             melee_data.cooldown_time = 0.5
         else
@@ -647,6 +649,8 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
                                     melee_data.last_tried_melee_time = melee_data.accumulated_time
                                 end
 
+                                melee_data.hit_enemy = false
+
                                 -- Setting these allows the AnimNotify to actually hit stuff
                                 attack.CurrentMontage = melee_montage
                                 attack.InputData = melee_montage
@@ -671,30 +675,37 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
                                 -- We need to directly write the damage type address into the melee weapon
                                 -- This is because the game uses this to determine hit reactions.
                                 -- AFAIK there is no reflected method to do this, so we have to do it manually.
+                                local damage_type_strs = {
+                                    "Wdp_Combo_L" .. tostring(melee_data.enemy_combo_index + 1) .. "_DamageType_C", -- This allows us to stumble the enemy first
+                                    "IronPipeDamage_C" -- This one allows us to break through breakable walls. I don't know why the previous one doesn't work for this. This one hurts but doesn't stumble
+                                }
                                 local damage_type = nil
 
-                                local hit_enemy_recently = os.clock() - melee_data.last_enemy_hit_time < 2.0
-                                local dtype_str = not hit_enemy_recently and "IronPipeDamage_C" or ("Wdp_Combo_L" .. tostring(melee_data.enemy_combo_index + 1) .. "_DamageType_C")
-                                damage_type = lookup_damage_type(dtype_str)
-                                if damage_type == nil then
-                                    print("Failed to find damage type: " .. dtype_str)
-                                end
+                                for _, dtype_str in ipairs(damage_type_strs) do
+                                    damage_type = lookup_damage_type(dtype_str)
 
-                                if damage_type ~= nil then
-                                    local defobj = damage_type:get_class_default_object()
-                                    if defobj:is_a(SHMeleeBaseDamage_c) then
-                                        defobj.bIsGroundHit = true -- Lets attacks hit the ground
+                                    if damage_type == nil then
+                                        print("Failed to find damage type: " .. dtype_str)
+                                    else
+                                        local defobj = damage_type:get_class_default_object()
+                                        if defobj:is_a(SHMeleeBaseDamage_c) then
+                                            defobj.bIsGroundHit = true -- Lets attacks hit the ground
+                                        end
+    
+                                        weapon:write_qword(MELEE_WEAPON_DAMAGE_TYPE_OFFSET, damage_type:get_address())
                                     end
 
-                                    weapon:write_qword(MELEE_WEAPON_DAMAGE_TYPE_OFFSET, damage_type:get_address())
-                                end
+                                    local pcall_res = pcall(function()
+                                        last_anim_notify_melee_obj:DANGEROUS_call_member_virtual(ANIMNOTIFY_NOTIFY_VTABLE_INDEX + 1, mesh, melee_montage, reusable_anim_notify_ref)
+                                    end)
 
-                                local pcall_res = pcall(function()
-                                    last_anim_notify_melee_obj:DANGEROUS_call_member_virtual(ANIMNOTIFY_NOTIFY_VTABLE_INDEX + 1, mesh, melee_montage, reusable_anim_notify_ref)
-                                end)
+                                    if not pcall_res then
+                                        print("Failed to call melee notify")
+                                    end
 
-                                if not pcall_res then
-                                    print("Failed to call melee notify")
+                                    if melee_data.hit_enemy then
+                                        break
+                                    end
                                 end
 
                                 -- Reset damage type
