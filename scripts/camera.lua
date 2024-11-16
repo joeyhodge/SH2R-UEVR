@@ -1856,6 +1856,11 @@ uevr.sdk.callbacks.on_xinput_get_state(function(retval, user_index, state)
     if state.Gamepad.sThumbRY <= -max_int16 * 0.75 and investigating_item == nil then
         state.Gamepad.wButtons = state.Gamepad.wButtons | XINPUT_GAMEPAD_B
     end
+
+    -- if pressing L3 then press select
+    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_LEFT_THUMB) ~= 0 and (state.Gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_THUMB) == 0 then
+        state.Gamepad.wButtons = state.Gamepad.wButtons | XINPUT_GAMEPAD_BACK
+    end
 end)
 
 uevr.sdk.callbacks.on_script_reset(function()
