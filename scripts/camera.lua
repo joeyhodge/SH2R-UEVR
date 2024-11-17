@@ -1086,6 +1086,9 @@ vr.set_mod_value("VR_CameraRightOffset", "0.0")
 vr.set_mod_value("UI_Distance", "1.0")
 vr.set_mod_value("UI_Size", "1.0")
 
+api:execute_command("r.Streamline.DLSSG.Enable 0") -- Disable DLSSG, not compatible with VR
+api:execute_command("r.FidelityFX.FI.Enabled 0") -- Disable FSR3 frame interpolation, not compatible with VR
+
 local function should_vr_mode()
     anim_instance = nil
     movement_component = nil
