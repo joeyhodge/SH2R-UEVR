@@ -364,7 +364,7 @@ local forward = nil
 local last_delta = 1.0
 local last_level = nil
 
-if AnimNotify_MeleeAttackCheck_Notify then
+--[[if AnimNotify_MeleeAttackCheck_Notify then
     AnimNotify_MeleeAttackCheck_Notify:set_function_flags(AnimNotify_MeleeAttackCheck_Notify:get_function_flags() | 0x400) -- Mark as native
     AnimNotify_MeleeAttackCheck_Notify:hook_ptr(
     function(fn, obj, locals, result)
@@ -386,7 +386,7 @@ if AnimNotify_MeleeAttackCheck_Notify then
     function(fn, obj, locals, result)
 
     end)
-end
+end]]
 
 local AnimMontage_c = api:find_uobject("Class /Script/Engine.AnimMontage")
 local UClass_c = api:find_uobject("Class /Script/CoreUObject.Class")
@@ -670,6 +670,7 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
                                 -- Triggers Notify function, which does the melee attack traces and damage
                                 reusable_anim_notify_ref:write_qword(0x10, last_anim_notify_melee_obj:get_address()) -- 0x10 is the offset of Notify
                                 reusable_anim_notify_ref.NotifySource = mesh
+                                local last_mesh_context = last_anim_notify_melee_obj:read_qword(0x30) -- 0x30 is the offset of MeshContext
                                 last_anim_notify_melee_obj:write_qword(0x30, mesh:get_address()) -- 0x30 is the offset of MeshContext
 
                                 -- We need to directly write the damage type address into the melee weapon
@@ -712,7 +713,7 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
                                 weapon:write_qword(MELEE_WEAPON_DAMAGE_TYPE_OFFSET, 0)
 
                                 -- Reset mesh context
-                                last_anim_notify_melee_obj:write_qword(0x30, 0)
+                                last_anim_notify_melee_obj:write_qword(0x30, last_mesh_context)
 
                                 -- Reset the attack request back so we don't break something
                                 attack.CurrentMontage = nil
@@ -720,14 +721,6 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
 
                                 if not triggered_melee_recently then
                                     vr.trigger_haptic_vibration(0, 0.1, 0.1, 0.1, vr.get_right_joystick_source()) -- Very light vibration
-
-                                    --local current_montage = anim_instance:GetCurrentActiveMontage()
-
-                                    --if current_montage == melee_montage then
-                                    if anim_instance:Montage_IsPlaying(melee_montage) then
-                                        --anim_instance:Montage_Stop(0.0, current_montage)
-                                        --anim_instance:Montage_SetPosition(current_montage, current_montage:GetPlayLength())
-                                    end
                                 end
                             end
                         end
