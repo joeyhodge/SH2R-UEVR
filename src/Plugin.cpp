@@ -582,7 +582,7 @@ void* SHPlugin::on_get_end_trace_loc_internal(uevr::API::UObject* weapon, glm::f
 
             // Rifles and shotguns have their muzzle facing the wrong way (90 degrees off)
             // so we have to correct it
-            if (name.contains(L"Rifle") or name.contains(L"Shotgun")) {
+            if (name.contains(L"Rifle") || name.contains(L"Shotgun")) {
                 struct {
                     glm::f64vec3 location;
                     float angle;
